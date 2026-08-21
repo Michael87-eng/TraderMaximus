@@ -1,0 +1,3 @@
+# The trading engines depend on the standard library only.
+# PyYAML is needed solely to read YAML configuration files; JSON works without it.
+PyYAML>=6.0

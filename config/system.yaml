@@ -1,0 +1,70 @@
+# TraderMaximus system configuration.
+#
+# Sections map to the section 29.1 precedence layers, highest authority first:
+#
+#   emergency > risk > broker > portfolio > strategy > signal > ai
+#
+# A lower-precedence layer may only ever *tighten* a value set by a higher one.
+# Anything looser is rejected and recorded in `governor.violations` rather than
+# silently applied. The keys under `risk:` are hard limits: only the emergency
+# and risk layers may set them at all.
+
+emergency:
+  kill_switch_active: false
+  forced_closure_triggered: false
+  emergency_mode_active: false
+  override_allowed: false
+
+risk:
+  # Section 8.1 hard limits, as fractions of account equity.
+  max_risk_per_trade: 0.005          # 0.5% per trade
+  max_total_portfolio_risk: 0.02     # 2.0% aggregate open risk
+  max_portfolio_exposure: 0.50
+  max_net_exposure: 0.50
+  max_gross_exposure: 1.00
+  max_daily_loss: 0.015
+  max_weekly_loss: 0.03
+  max_monthly_drawdown: 0.06
+  max_portfolio_drawdown: 0.10
+  max_leverage: 1.0                  # 1.0 means no leverage
+  max_var_95: 0.03
+  # ES is the mean loss beyond VaR, so it must exceed the VaR limit; a config
+  # that inverts them is rejected at load time because it could never bind.
+  max_expected_shortfall_95: 0.05
+
+broker:
+  max_daily_trades: 20
+  max_daily_orders: 50
+  max_spread_bps: 50.0
+  max_slippage_bps: 30.0
+  max_order_size: 0.10               # share of average daily volume
+  latency_tolerance_ms: 2000
+  commission_bps: 1.0
+  max_order_retries: 3
+
+portfolio:
+  max_positions_total: 15
+  max_positions_equities: 10
+  max_positions_crypto: 5
+  max_positions_forex: 3
+  max_sector_exposure: 0.30
+  max_asset_class_exposure: 0.40
+  max_correlated_exposure: 0.20
+  correlation_threshold: 0.70
+  max_top3_concentration: 0.40       # measured against equity, not exposure
+  max_top5_concentration: 0.60
+  max_single_position: 0.15
+  max_avg_pairwise_correlation: 0.60
+  min_diversification_ratio: 0.30
+  cash_reserve: 0.30                 # section 25.1: never traded
+
+  # Data quality (section 3.1).
+  data_quality_threshold: 0.85
+  max_staleness_seconds: 5.0
+  provider_disagreement_tolerance: 0.005
+  min_regime_confidence: 0.70
+  fail_mode: HALT
+
+strategy:
+  # Strategy-layer values may tighten but never loosen the limits above.
+  min_signal_score: 60.0

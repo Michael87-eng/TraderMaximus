@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tradermaximus"
+version = "0.1.0"
+description = "Risk-first algorithmic trading system: strategies propose, the risk engine decides"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+# The engines run on the standard library alone, so a deployment cannot fail
+# because a numerical dependency changed a default between versions.
+dependencies = []
+
+[project.optional-dependencies]
+config = ["PyYAML>=6.0"]
+dev = ["PyYAML>=6.0", "pytest>=7.0", "mypy>=1.5", "ruff>=0.1"]
+
+[project.scripts]
+tradermaximus = "tradermaximus.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tradermaximus*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
