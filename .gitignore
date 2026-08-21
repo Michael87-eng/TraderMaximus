@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.coverage
+htmlcov/
+
+# Runtime artefacts — never commit live trading state or credentials
+journal/
+*.jsonl
+logs/
+.env
+.env.*
+!.env.example
+secrets.yaml
+state/
