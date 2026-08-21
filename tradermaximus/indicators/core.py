@@ -19,6 +19,27 @@ from typing import Sequence
 Number = float | None
 
 
+def _mean(values: Sequence[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _pstdev(values: Sequence[float]) -> float:
+    """Population standard deviation in plain float arithmetic.
+
+    ``statistics.pstdev`` converts every input to :class:`fractions.Fraction`
+    for exactness. That costs roughly twenty times more than float arithmetic
+    and dominated the whole indicator pipeline — a single feature snapshot on
+    900 bars spent ~85% of its time inside ``fractions``. The extra precision
+    is irrelevant here: these are price and return series where the inputs
+    themselves carry far more uncertainty than the last few ULPs.
+    """
+    n = len(values)
+    if n < 2:
+        return 0.0
+    mean = sum(values) / n
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / n)
+
+
 # ---------------------------------------------------------------------------
 # Moving averages
 # ---------------------------------------------------------------------------
@@ -235,7 +256,7 @@ def bollinger_bands(
     lower: list[Number] = [None] * len(closes)
     for i in range(period - 1, len(closes)):
         window = closes[i - period + 1: i + 1]
-        deviation = statistics.pstdev(window)
+        deviation = _pstdev(window)
         centre = middle[i]
         if centre is not None:
             upper[i] = centre + num_std * deviation
@@ -260,7 +281,7 @@ def realized_volatility(
     returns = log_returns(closes[-(period + 1):])
     if len(returns) < 2:
         return None
-    return statistics.pstdev(returns) * math.sqrt(periods_per_year)
+    return _pstdev(returns) * math.sqrt(periods_per_year)
 
 
 def volatility_series(
@@ -268,13 +289,26 @@ def volatility_series(
     period: int = 20,
     periods_per_year: int = 252,
 ) -> list[Number]:
-    """Rolling annualised volatility, aligned to ``closes``."""
-    out: list[Number] = [None] * len(closes)
-    for i in range(period, len(closes)):
-        window = closes[i - period: i + 1]
-        returns = log_returns(window)
-        if len(returns) >= 2:
-            out[i] = statistics.pstdev(returns) * math.sqrt(periods_per_year)
+    """Rolling annualised volatility, aligned to ``closes``.
+
+    Log returns are computed once and then windowed, rather than recomputed
+    for every bar. Same values, one pass instead of ``n`` passes.
+    """
+    n = len(closes)
+    out: list[Number] = [None] * n
+    if n < period + 1:
+        return out
+
+    # returns[i] is the return from closes[i] to closes[i + 1].
+    returns: list[float | None] = []
+    for prev, curr in zip(closes, closes[1:]):
+        returns.append(math.log(curr / prev) if (prev > 0 and curr > 0) else None)
+
+    annualisation = math.sqrt(periods_per_year)
+    for i in range(period, n):
+        window = [r for r in returns[i - period: i] if r is not None]
+        if len(window) >= 2:
+            out[i] = _pstdev(window) * annualisation
     return out
 
 
