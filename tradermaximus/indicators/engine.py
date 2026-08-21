@@ -185,6 +185,12 @@ class FeatureEngine:
             "breakdown_20": structure.is_breakdown(closes, lows, 20),
             "tight_closes": structure.tight_closes(closes),
             "gap_pct": _gap_pct(candles),
+            # Raw bar values, needed by conditions that reason about the shape
+            # of the current bar itself (gap fill, intraday rejection).
+            "bar_open": candles[-1].open,
+            "bar_high": candles[-1].high,
+            "bar_low": candles[-1].low,
+            "prev_close": candles[-2].close if len(candles) >= 2 else None,
         }
         values.update(core.ichimoku(highs, lows, closes))
 

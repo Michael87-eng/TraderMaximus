@@ -200,7 +200,7 @@ class ProviderChain:
         if not providers:
             raise ValueError("ProviderChain requires at least one provider")
         self.providers = list(providers)
-        self.journal = journal or NULL_JOURNAL
+        self.journal = journal if journal is not None else NULL_JOURNAL
         self.fail_mode = fail_mode.upper()
         self.disagreement_tolerance = disagreement_tolerance
         self._cache: dict[tuple[str, str], CandleSeries] = {}

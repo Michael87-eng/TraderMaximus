@@ -169,6 +169,16 @@ class Journal:
     def __len__(self) -> int:
         return len(self._events)
 
+    def __bool__(self) -> bool:
+        """A journal is always truthy.
+
+        Without this, ``__len__`` makes an empty journal falsy, and the
+        idiom ``journal or NULL_JOURNAL`` silently swaps a caller's real
+        journal for the shared in-memory one — losing the entire audit
+        trail precisely when nothing has been logged yet.
+        """
+        return True
+
     def events(
         self,
         event_type: EventType | str | None = None,

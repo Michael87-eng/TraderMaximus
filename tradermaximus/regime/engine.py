@@ -69,6 +69,22 @@ WEIGHTS: Mapping[str, float] = {
     "correlation_change": 0.05,
 }
 
+#: Slope at which the trend component saturates its ``[-1, 1]`` range.
+#:
+#: Section 5.1 lists a ``trend_slope_threshold`` of 0.01 but does not say what
+#: unit the slope is in. Read as a *per-bar* fractional change on daily bars,
+#: 0.01 means the 20-day average rising 1% every single day — roughly 250% a
+#: year. Using it as the normalisation divisor pins the trend component near
+#: its neutral midpoint for every realistic market, which caps the composite
+#: score below the 0.70 ``TREND_UP`` cutoff and makes that regime effectively
+#: unreachable. Since ``TREND_UP`` gates the entire momentum and CAN SLIM
+#: library, the miscalibration would silently disable most of the system.
+#:
+#: 0.002/bar (~0.2% a day, ~5% a month) is the reference for a strong sustained
+#: daily trend, so that is the saturation point. The spec's 0.01 is retained
+#: below as the "is it trending at all" threshold it reads as.
+TREND_SLOPE_REFERENCE = 0.002
+
 #: Section 5.1 thresholds.
 THRESHOLDS: Mapping[str, float] = {
     "trend_slope": 0.01,
@@ -310,12 +326,14 @@ class RegimeEngine:
     ) -> tuple[dict[str, float | None], dict[str, float], list[str]]:
         missing: list[str] = []
 
-        # Trend slope: per-bar fractional MA change, scaled so that the section
-        # 5.1 threshold of 0.01 maps to a clearly positive normalised reading.
+        # Trend slope: per-bar fractional MA change, saturating at
+        # TREND_SLOPE_REFERENCE (see its docstring for why not 0.01).
         slope = features.number("ma_slope_20")
         if slope is None:
             missing.append("trend_slope")
-        trend_norm = _symmetric_norm(_clamp(slope / 0.01, -1.0, 1.0) if slope is not None else 0.0)
+        trend_norm = _symmetric_norm(
+            _clamp(slope / TREND_SLOPE_REFERENCE, -1.0, 1.0) if slope is not None else 0.0
+        )
 
         vol_pct = features.number("volatility_percentile")
         if vol_pct is None:
