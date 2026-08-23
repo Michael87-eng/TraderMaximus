@@ -272,12 +272,30 @@ class Position:
     lowest_price: float | None = None
     stop_moved_to_breakeven: bool = False
     trailing_active: bool = False
+    #: Risk per unit and size as at entry, frozen for R-multiple reporting.
+    #:
+    #: R must be measured against the risk actually *taken*, which is fixed the
+    #: moment the position opens. Measuring against the live stop makes the
+    #: metric meaningless: a winner whose stop trailed up to breakeven has zero
+    #: current risk, so it would report R = 0 no matter how much it made — and
+    #: drift detection and strategy validation both consume average R.
+    initial_risk_per_unit: float = 0.0
+    initial_quantity: float = 0.0
 
     def __post_init__(self) -> None:
         if self.highest_price is None:
             self.highest_price = self.entry_price
         if self.lowest_price is None:
             self.lowest_price = self.entry_price
+        if self.initial_quantity <= 0:
+            self.initial_quantity = self.quantity
+        if self.initial_risk_per_unit <= 0 and self.stop_price is not None:
+            self.initial_risk_per_unit = abs(self.entry_price - self.stop_price)
+
+    @property
+    def initial_risk(self) -> float:
+        """Total capital placed at risk when the position was opened."""
+        return self.initial_risk_per_unit * self.initial_quantity
 
     def notional(self, price: float) -> float:
         return abs(self.quantity) * price

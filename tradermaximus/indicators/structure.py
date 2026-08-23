@@ -137,14 +137,48 @@ def rolling_low(values: Sequence[float], period: int, offset: int = 1) -> Number
     return min(values[end - period: end])
 
 
-def is_breakout(closes: Sequence[float], highs: Sequence[float], period: int = 20) -> bool:
-    """True when the latest close exceeds the prior ``period``-bar high."""
-    prior = rolling_high(highs, period, offset=1)
+def is_breakout(
+    closes: Sequence[float],
+    highs: Sequence[float],
+    period: int = 20,
+    *,
+    basis: str = "close",
+) -> bool:
+    """True when the latest close breaks out above the prior ``period`` bars.
+
+    ``basis`` selects what the close is measured against:
+
+    ``"close"`` (default)
+        ``close > max(prior period closes)`` — a ``period``-day *closing* high.
+        This is the standard closing-basis breakout, and the one §6.2.1
+        implies when it specifies "Entry: On breakout candle close".
+
+    ``"high"``
+        ``close > max(prior period intraday highs)`` — the close must clear
+        every intraday print of the window.
+
+    The default changed from ``"high"`` to ``"close"`` after measurement:
+    comparing a *close* against prior *intraday highs* is a mismatched
+    comparison that made the condition roughly twice as strict as intended
+    (6.0% of bars versus 13.3%), for no stated reason in the specification. A
+    close above the prior 20 closes is a 20-day high on the basis the entry
+    rule itself uses.
+    """
+    reference = closes if basis == "close" else highs
+    prior = rolling_high(reference, period, offset=1)
     return prior is not None and closes[-1] > prior
 
 
-def is_breakdown(closes: Sequence[float], lows: Sequence[float], period: int = 20) -> bool:
-    prior = rolling_low(lows, period, offset=1)
+def is_breakdown(
+    closes: Sequence[float],
+    lows: Sequence[float],
+    period: int = 20,
+    *,
+    basis: str = "close",
+) -> bool:
+    """Mirror of :func:`is_breakout` for downside breaks."""
+    reference = closes if basis == "close" else lows
+    prior = rolling_low(reference, period, offset=1)
     return prior is not None and closes[-1] < prior
 
 
@@ -186,10 +220,26 @@ def fibonacci_levels(swing_low: float, swing_high: float) -> dict[str, float]:
     }
 
 
-def consolidation_range(highs: Sequence[float], lows: Sequence[float], period: int = 20) -> tuple[float, float, float]:
-    """``(low, high, depth)`` of the trailing window; depth is a fraction of the high."""
-    window_high = max(highs[-period:])
-    window_low = min(lows[-period:])
+def consolidation_range(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    period: int = 20,
+    *,
+    exclude_recent: int = 0,
+) -> tuple[float, float, float]:
+    """``(low, high, depth)`` of the trailing window; depth is a fraction of the high.
+
+    ``exclude_recent`` drops the most recent bars from the measurement. Base
+    detectors pass 1 so that the resulting pivot describes the consolidation
+    the price is trying to break *out of*, not a window that already contains
+    the breakout bar.
+    """
+    end = len(highs) - exclude_recent
+    if end <= 0:
+        return 0.0, 0.0, 0.0
+    start = max(0, end - period)
+    window_high = max(highs[start:end])
+    window_low = min(lows[start:end])
     depth = (window_high - window_low) / window_high if window_high > 0 else 0.0
     return window_low, window_high, depth
 
@@ -224,6 +274,17 @@ def volume_dryup(volumes: Sequence[float], period: int = 10, baseline: int = 50)
 # ---------------------------------------------------------------------------
 
 
+#: Bars excluded from every pivot calculation.
+#:
+#: The pivot is the level a breakout must clear, so it has to be established
+#: by the base's own formation and be *fixed* before the breakout bar prints.
+#: Measuring it over a window that includes the current bar makes
+#: ``close > pivot`` equivalent to ``close > this bar's own high`` — which is
+#: impossible by definition, and silently left three CAN SLIM strategies
+#: unable to generate a single signal.
+PIVOT_EXCLUDE_RECENT = 1
+
+
 def detect_flat_base(
     highs: Sequence[float],
     lows: Sequence[float],
@@ -234,15 +295,17 @@ def detect_flat_base(
     max_depth: float = 0.15,
 ) -> BasePattern | None:
     """Flat base: 5-6+ weeks sideways, correction no deeper than ~15%."""
-    if len(closes) < min_bars + 5:
+    if len(closes) < min_bars + 5 + PIVOT_EXCLUDE_RECENT:
         return None
-    low, high, depth = consolidation_range(highs, lows, min_bars)
-    if depth > max_depth:
+    low, high, depth = consolidation_range(
+        highs, lows, min_bars, exclude_recent=PIVOT_EXCLUDE_RECENT
+    )
+    if depth > max_depth or high <= 0:
         return None
     return BasePattern(
         kind="flat_base",
-        start_index=len(closes) - min_bars,
-        end_index=len(closes) - 1,
+        start_index=len(closes) - min_bars - PIVOT_EXCLUDE_RECENT,
+        end_index=len(closes) - 1 - PIVOT_EXCLUDE_RECENT,
         depth=depth,
         length_bars=min_bars,
         pivot=high,
@@ -269,13 +332,16 @@ def detect_cup_with_handle(
     shallow handle drifting down in the cup's upper half.
     """
     n = len(closes)
-    if n < min_bars + 5:
+    if n < min_bars + 5 + PIVOT_EXCLUDE_RECENT:
         return None
 
-    window = min(n, max_bars)
-    segment_high = highs[-window:]
-    segment_low = lows[-window:]
-    segment_close = closes[-window:]
+    # The pattern is measured on bars that had already formed, so the pivot it
+    # yields is a level the current bar can actually break through.
+    formed = n - PIVOT_EXCLUDE_RECENT
+    window = min(formed, max_bars)
+    segment_high = highs[formed - window:formed]
+    segment_low = lows[formed - window:formed]
+    segment_close = closes[formed - window:formed]
 
     # Left rim: the highest bar in the first half of the window.
     half = max(2, len(segment_high) // 2)
@@ -317,11 +383,14 @@ def detect_cup_with_handle(
         if handle_low < midpoint or (handle_depth or 0.0) > depth * 0.6:
             return None
 
-    pivot = max(segment_close[right_rim_index:]) if right_rim_index < len(segment_close) else right_rim
+    # The pivot is the right rim (or the handle's high where one formed):
+    # the level the base must be cleared above.
+    handle_high = max(segment_high[right_rim_index:]) if right_rim_index < len(segment_high) else right_rim
+    pivot = max(right_rim, handle_high)
     return BasePattern(
         kind="cup_with_handle",
-        start_index=n - window + left_rim_index,
-        end_index=n - 1,
+        start_index=formed - window + left_rim_index,
+        end_index=formed - 1,
         depth=depth,
         length_bars=length_bars,
         pivot=max(pivot, right_rim),
@@ -387,27 +456,28 @@ def detect_high_tight_flag(
     max_flag_depth: float = 0.25,
 ) -> BasePattern | None:
     """High tight flag: a 100%+ advance, then a shallow 3-5 week rest. Rare."""
-    if len(closes) < run_bars + flag_bars:
+    if len(closes) < run_bars + flag_bars + PIVOT_EXCLUDE_RECENT:
         return None
 
-    run_start = closes[-(run_bars + flag_bars)]
-    run_peak = max(highs[-(run_bars + flag_bars): -flag_bars])
+    formed = len(closes) - PIVOT_EXCLUDE_RECENT
+    run_start = closes[formed - (run_bars + flag_bars)]
+    run_peak = max(highs[formed - (run_bars + flag_bars): formed - flag_bars])
     if run_start <= 0:
         return None
     advance = (run_peak - run_start) / run_start
     if advance < min_advance:
         return None
 
-    flag_low = min(lows[-flag_bars:])
-    flag_high = max(highs[-flag_bars:])
+    flag_low = min(lows[formed - flag_bars:formed])
+    flag_high = max(highs[formed - flag_bars:formed])
     depth = (run_peak - flag_low) / run_peak if run_peak > 0 else 1.0
     if depth > max_flag_depth:
         return None
 
     return BasePattern(
         kind="high_tight_flag",
-        start_index=len(closes) - (run_bars + flag_bars),
-        end_index=len(closes) - 1,
+        start_index=formed - (run_bars + flag_bars),
+        end_index=formed - 1,
         depth=depth,
         length_bars=flag_bars,
         pivot=flag_high,

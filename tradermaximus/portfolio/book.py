@@ -330,8 +330,8 @@ class PositionBook:
             return None
 
         del self._positions[symbol]
-        risk_per_unit = abs(position.entry_price - position.stop_price) if position.stop_price else 0.0
-        initial_risk = risk_per_unit * (quantity if quantity > 0 else 1.0)
+        # R is measured against the risk taken at entry, not the current stop.
+        initial_risk = position.initial_risk
         record = TradeRecord(
             symbol=symbol,
             strategy_id=position.strategy_id,

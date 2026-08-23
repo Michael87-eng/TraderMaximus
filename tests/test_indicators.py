@@ -193,3 +193,97 @@ class TestPatterns(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBreakoutBasis(unittest.TestCase):
+    """The breakout comparison basis, recalibrated after measurement."""
+
+    def test_close_basis_is_the_default(self) -> None:
+        """close > max(prior closes) is the standard closing-basis breakout."""
+        from tradermaximus.indicators.structure import is_breakout
+
+        closes = [10.0] * 25 + [12.0]
+        highs = [15.0] * 25 + [12.5]
+        # Above the prior closing high, but below the prior intraday highs.
+        self.assertTrue(is_breakout(closes, highs, 20))
+        self.assertFalse(is_breakout(closes, highs, 20, basis="high"))
+
+    def test_high_basis_still_available(self) -> None:
+        from tradermaximus.indicators.structure import is_breakout
+
+        closes = [10.0] * 25 + [20.0]
+        highs = [10.5] * 25 + [20.5]
+        self.assertTrue(is_breakout(closes, highs, 20, basis="high"))
+
+    def test_no_breakout_on_flat_series(self) -> None:
+        from tradermaximus.indicators.structure import is_breakout
+
+        self.assertFalse(is_breakout([10.0] * 26, [10.5] * 26, 20))
+
+    def test_breakdown_mirrors_breakout(self) -> None:
+        from tradermaximus.indicators.structure import is_breakdown
+
+        closes = [10.0] * 25 + [8.0]
+        lows = [5.0] * 25 + [7.5]
+        self.assertTrue(is_breakdown(closes, lows, 20))
+        self.assertFalse(is_breakdown(closes, lows, 20, basis="high"))
+
+
+class TestBasePivot(unittest.TestCase):
+    """Regression: a pivot spanning the current bar can never be broken.
+
+    The pivot was measured over a window that included the current bar, so
+    ``close > pivot`` reduced to ``close > this bar's own high`` — impossible
+    by definition. Three CAN SLIM strategies could not produce a single signal.
+    """
+
+    def setUp(self) -> None:
+        from tests.helpers import random_walk, series
+
+        self.candles = random_walk(400, seed=21, drift=0.0012)
+        self.series = series(self.candles)
+
+    def test_pivot_excludes_the_current_bar(self) -> None:
+        from tradermaximus.indicators.structure import detect_flat_base
+
+        base = detect_flat_base(
+            self.series.highs, self.series.lows, self.series.closes, self.series.volumes
+        )
+        if base is None:
+            self.skipTest("no flat base formed in this fixture")
+        # The pivot must come from bars before the current one, so it can be
+        # exceeded without requiring a close above its own bar's high.
+        self.assertLessEqual(base.end_index, len(self.series) - 2)
+
+    def test_close_above_pivot_is_reachable(self) -> None:
+        """Sweep a series and confirm the breakout condition can actually fire."""
+        from tradermaximus.indicators.structure import detect_flat_base
+        from tests.helpers import random_walk, series
+
+        detected = breakouts = 0
+        candles = random_walk(600, seed=5, drift=0.0015, calm_tail=0)
+        full = series(candles)
+        for index in range(300, len(full)):
+            visible = full.slice_until(full.timestamps[index]).tail(300)
+            base = detect_flat_base(
+                visible.highs, visible.lows, visible.closes, visible.volumes
+            )
+            if base is None:
+                continue
+            detected += 1
+            if visible.last.close > base.pivot:
+                breakouts += 1
+        self.assertGreater(detected, 0, "no base ever formed; fixture is unusable")
+        self.assertGreater(
+            breakouts, 0, "close never exceeded the pivot: the pivot bug has returned"
+        )
+
+    def test_consolidation_range_honours_exclusion(self) -> None:
+        from tradermaximus.indicators.structure import consolidation_range
+
+        highs = [10.0] * 20 + [99.0]
+        lows = [9.0] * 21
+        _, high_including, _ = consolidation_range(highs, lows, 21, exclude_recent=0)
+        _, high_excluding, _ = consolidation_range(highs, lows, 20, exclude_recent=1)
+        self.assertEqual(high_including, 99.0)
+        self.assertEqual(high_excluding, 10.0)
