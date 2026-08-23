@@ -170,7 +170,15 @@ class RegimeState:
 # ---------------------------------------------------------------------------
 
 ALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
-    Regime.TREND_UP: frozenset({"momentum", "breakout", "can_slim", "pullback", "institutional"}),
+    # Section 5.4 states TREND_UP's disallowed set as "Reversal, Gap (except
+    # gap-up), Mean Reversion". The parenthetical carves gap-up *out* of the
+    # prohibition, so a long gap-up continuation belongs in the allowed set.
+    # Omitting it left the gap strategy eligible in no regime at all: it was
+    # neither permitted nor forbidden anywhere, and the permission check
+    # required explicit membership.
+    Regime.TREND_UP: frozenset(
+        {"momentum", "breakout", "can_slim", "pullback", "institutional", "gap"}
+    ),
     Regime.TREND_DOWN: frozenset({"short", "cash", "defensive"}),
     Regime.RANGE: frozenset({"reversal", "mean_reversion", "oscillator"}),
     Regime.HIGH_VOLATILITY: frozenset({"reversal", "mean_reversion", "defensive"}),
@@ -236,8 +244,19 @@ MIN_SIGNAL_SCORE: Mapping[Regime, float | None] = {
 def is_strategy_type_allowed(strategy_type: str, state: RegimeState) -> tuple[bool, str]:
     """Check a strategy family against every active regime.
 
-    A veto from *any* active regime blocks the strategy. This is what makes a
-    ``TREND_UP`` market that is also ``HIGH_VOLATILITY`` refuse breakouts.
+    The two directions are deliberately asymmetric, and both are conservative:
+
+    * A **veto** from *any* active regime blocks the strategy. This is what
+      makes a ``TREND_UP`` market that is also ``HIGH_VOLATILITY`` refuse
+      breakouts — the risk reading wins over the trend reading.
+    * A **permission** may come from the primary regime *or* any active tag.
+
+    Permission was originally taken from the primary regime alone, which made
+    the two directions inconsistent: a strategy permitted by an active
+    ``BULL_MARKET`` backdrop was still blocked because the primary ``TREND_UP``
+    label happened not to list it. Since a veto from any regime still
+    overrides, widening permission to the union cannot authorise anything an
+    active regime objects to.
     """
     if not state.is_tradeable:
         return False, f"regime {state.primary.value} permits no trading"
@@ -246,10 +265,17 @@ def is_strategy_type_allowed(strategy_type: str, state: RegimeState) -> tuple[bo
         if strategy_type in DISALLOWED_STRATEGY_TYPES.get(regime, frozenset()):
             return False, f"strategy type {strategy_type!r} is disallowed in {regime.value}"
 
-    allowed = ALLOWED_STRATEGY_TYPES.get(state.primary, frozenset())
-    if strategy_type not in allowed:
-        return False, f"strategy type {strategy_type!r} is not in the allowed set for {state.primary.value}"
-    return True, "eligible"
+    permitted_by = [
+        regime.value
+        for regime in sorted(state.all_regimes, key=lambda r: r.value)
+        if strategy_type in ALLOWED_STRATEGY_TYPES.get(regime, frozenset())
+    ]
+    if not permitted_by:
+        return False, (
+            f"strategy type {strategy_type!r} is not in the allowed set for any active regime "
+            f"({', '.join(sorted(r.value for r in state.all_regimes))})"
+        )
+    return True, f"eligible via {', '.join(permitted_by)}"
 
 
 def minimum_score(state: RegimeState) -> float | None:

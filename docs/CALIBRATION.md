@@ -168,3 +168,112 @@ appropriately *selective* — not that any strategy has an edge. The backtest
 above loses money (PF 0.20, 22% win rate), which is the expected result of
 trading a near-random series after costs. Signal frequency and profitability
 are separate questions, and only real market history answers the second.
+
+---
+
+# Second pass: findings from the complete pre-fix baseline
+
+The first pass measured STRATEGY_001 only. Running the autopsy across all
+eight equity strategies revealed that **five of them produced literally zero
+signals**, which reframed the problem: this was never mainly a calibration
+question.
+
+| strategy | pre-fix signals / 640 bars |
+|---|---|
+| STRATEGY_001 Momentum Breakout | 1.6 |
+| STRATEGY_002 Pullback | 0.1 |
+| STRATEGY_003 Gap Up | **0.0** |
+| STRATEGY_004 Reversal | **0.0** |
+| STRATEGY_005 CAN SLIM Cup | **0.0** |
+| STRATEGY_006 Double Bottom | 0.2 |
+| STRATEGY_007 Flat Base | **0.0** |
+| STRATEGY_008 High Tight Flag | **0.0** |
+
+## Finding 4: the gap strategy was eligible in no regime at all
+
+`strategy type eligible (gap)` killed **9,760 of 9,760 bars — 100.0%**.
+
+§5.4 gives TREND_UP's disallowed column as *"Reversal, Gap (except gap-up),
+Mean Reversion"*. The parenthetical carves gap-**up** out of the prohibition,
+but the allowed column does not list gap either. Since the permission check
+required explicit membership in the allowed set, a long gap-up continuation
+was permitted nowhere: not forbidden, but never authorised.
+
+Fixed by adding `gap` to TREND_UP's allowed set, matching the carve-out the
+specification states.
+
+## Finding 5: permission and veto were inconsistent
+
+The same investigation exposed a broader asymmetry. Vetoes were evaluated
+across *every* active regime — correct, and what makes a `TREND_UP` market
+that is also `HIGH_VOLATILITY` refuse breakouts. But permissions were read
+from the **primary regime alone**, so a strategy authorised by an active
+`BULL_MARKET` backdrop was still blocked when the primary `TREND_UP` label
+happened not to list it.
+
+Permission is now a union across active regimes; the veto remains universal
+and still overrides. Widening permission cannot authorise anything an active
+regime objects to, which `test_veto_still_overrides_any_permission` asserts.
+
+## Finding 6: counter-trend strategies were scored on a trend rubric
+
+REVERSAL was eligible on 72.6% of bars and still produced zero signals. The
+funnel showed why: **42 of 42 valid setups scored 42–64 against a threshold of
+75**. Not one was ever close.
+
+Component breakdown of those setups:
+
+| component | mean | % of max |
+|---|---|---|
+| market_regime_alignment | 6.79 / 20 | 34% |
+| **trend_alignment** | **4.30 / 15** | **29%** |
+| setup_quality | 12.29 / 15 | 82% |
+| **volume_confirmation** | **0.91 / 10** | **9%** |
+| fundamentals | 8.27 / 10 | 83% |
+| liquidity | 4.85 / 5 | 97% |
+
+§7.1 defines `trend_alignment` as MA stack, ADX strength and higher
+highs/lows, and `volume_confirmation` as expanding relative volume with rising
+OBV. A reversal at support has none of these *by construction* — that absence
+is the setup, not a defect in it.
+
+This produced a three-way contradiction between sections that cannot all hold:
+
+* §5.4 routes reversal and mean-reversion into RANGE and HIGH_VOLATILITY
+* §7.2 assigns those regimes the **highest** minimum scores (70 and 75)
+* §7.1 scores exactly those strategies **lowest**
+
+Resolved by making both components family-aware, as `volatility_conditions`
+already was. For counter-trend families:
+
+* `trend_alignment` measures a constructive long-term backdrop to revert into
+  (price above MA200), the *absence* of a strong trend to fight (low ADX
+  scores high), and stretch from the mean.
+* `volume_confirmation` rewards both exhaustion (dry-up: sellers finished) and
+  capitulation (a spike flushing the last holders), which are the two textbook
+  reversal signatures, rather than expanding up-volume.
+
+Effect: reversal `trend_alignment` 29% → 51%, `volume_confirmation` 9% → 55%,
+median total 49.5 → 59.7. Momentum scores are unchanged, asserted by
+`test_trend_strategies_are_unaffected`.
+
+## Where this was deliberately stopped
+
+REVERSAL still rarely clears HIGH_VOLATILITY's threshold of 75 (1 of 55 in the
+sweep). That threshold comes straight from §7.2 and was left alone.
+
+The rubric was made *correct* — measuring what quality means for the family —
+not *lenient*. Continuing to tune the confidence weighting until reversal
+traded would have been optimising for an outcome on synthetic data, which is
+the failure mode this whole exercise exists to avoid. Whether reversal clears
+75 is a question for real market history.
+
+## Combined result
+
+| | before | after |
+|---|---|---|
+| portfolio signals / 640 bars | ~3 | **11** |
+| trades / 640 bars | ~2 | **9** |
+| strategies structurally able to fire | 3 of 8 | **8 of 8** |
+| hard limits changed | — | **none** |
+| tests | 180 | **205** |

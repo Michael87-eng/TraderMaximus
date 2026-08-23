@@ -359,3 +359,82 @@ class TestMetrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCounterTrendScoring(unittest.TestCase):
+    """Scoring must measure what quality means for the strategy family.
+
+    Section 7.1 defines trend_alignment and volume_confirmation in
+    trend-following terms. Applied unmodified to a reversal setup — which by
+    construction has no MA stack and no expanding up-volume — they scored 29%
+    and 9% of their components. Since section 5.4 routes reversals into RANGE
+    and HIGH_VOLATILITY, where section 7.2 sets the highest thresholds (70 and
+    75), every valid reversal setup was unreachable: 42 of 42 measured setups
+    scored below the bar and none ever traded.
+    """
+
+    def setUp(self) -> None:
+        from tradermaximus.strategy.library import MOMENTUM_BREAKOUT, REVERSAL
+
+        self.reversal = REVERSAL
+        self.momentum = MOMENTUM_BREAKOUT
+        self.features = FeatureEngine().compute(series(random_walk(400, seed=13)))
+        self.regime = RegimeEngine().classify(
+            self.features, MarketContext(breadth_index=0.2, new_highs_ratio=0.4)
+        )
+        self.scorer = SignalScoringEngine()
+
+    def _score(self, spec):
+        context = EvalContext(features=self.features, fundamentals=FUNDAMENTALS)
+        return self.scorer.score(
+            spec=spec, evaluation=spec.evaluate(context), features=self.features,
+            regime=self.regime, context=context,
+            inputs=ScoringInputs(average_daily_volume=1_000_000, spread_bps=6.0),
+        )
+
+    def test_counter_trend_families_are_recognised(self) -> None:
+        from tradermaximus.strategy.scoring import COUNTER_TREND_TYPES
+
+        self.assertIn("reversal", COUNTER_TREND_TYPES)
+        self.assertIn("mean_reversion", COUNTER_TREND_TYPES)
+        self.assertNotIn("momentum", COUNTER_TREND_TYPES)
+        self.assertNotIn("breakout", COUNTER_TREND_TYPES)
+
+    def test_reversal_is_not_scored_on_a_trend_rubric(self) -> None:
+        """A low-ADX, below-mean setup must not be punished for lacking a trend."""
+        from tradermaximus.strategy.scoring import SignalScoringEngine as Engine
+
+        trend_rubric = Engine._trend_alignment(self.features, self.reversal.side, "momentum")
+        counter_rubric = Engine._trend_alignment(self.features, self.reversal.side, "reversal")
+        self.assertNotEqual(
+            trend_rubric, counter_rubric,
+            "reversal is still being scored with the trend-following rubric",
+        )
+
+    def test_exhaustion_and_capitulation_both_count_as_volume_confirmation(self) -> None:
+        """Dry-up and a volume spike are both valid reversal signatures."""
+        from tradermaximus.strategy.scoring import SignalScoringEngine as Engine
+
+        class Stub:
+            def __init__(self, relative):
+                self._relative = relative
+
+            def number(self, key):
+                return self._relative if key == "relative_volume" else None
+
+            def get(self, key, default=None):
+                return default
+
+        dry = Engine._volume_confirmation(Stub(0.5), "reversal")
+        spike = Engine._volume_confirmation(Stub(2.6), "reversal")
+        middling = Engine._volume_confirmation(Stub(1.2), "reversal")
+        self.assertGreater(dry, middling, "exhaustion should score above unremarkable volume")
+        self.assertGreater(spike, middling, "capitulation should score above unremarkable volume")
+
+    def test_trend_strategies_are_unaffected(self) -> None:
+        """The fix must not inflate momentum scores."""
+        from tradermaximus.strategy.scoring import SignalScoringEngine as Engine
+
+        default_rubric = Engine._trend_alignment(self.features, self.momentum.side, "momentum")
+        breakout_rubric = Engine._trend_alignment(self.features, self.momentum.side, "breakout")
+        self.assertEqual(default_rubric, breakout_rubric)

@@ -262,3 +262,64 @@ class TestToolRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEligibilitySemantics(unittest.TestCase):
+    """Permission and veto are asymmetric, and both must stay conservative."""
+
+    def setUp(self) -> None:
+        self.features = FeatureEngine()
+        self.engine = RegimeEngine()
+
+    def _trending_state(self):
+        features = self.features.compute(series(trending(400)))
+        return self.engine.classify(
+            features,
+            MarketContext(
+                breadth_index=0.7, new_highs_ratio=0.75, correlation_change=0.05,
+                index_ma200_slope=0.001,
+            ),
+        )
+
+    def test_gap_up_is_permitted_in_trend_up(self) -> None:
+        """Section 5.4 disallows 'Gap (except gap-up)' in TREND_UP.
+
+        Regression: the carve-out was never added to the allowed set, so the
+        gap strategy was eligible in no regime at all — 100% of bars killed.
+        """
+        from tradermaximus.regime.engine import ALLOWED_STRATEGY_TYPES, Regime
+
+        self.assertIn("gap", ALLOWED_STRATEGY_TYPES[Regime.TREND_UP])
+        allowed, _ = is_strategy_type_allowed("gap", self._trending_state())
+        self.assertTrue(allowed)
+
+    def test_permission_may_come_from_an_active_tag(self) -> None:
+        """A tag that permits a strategy counts, not only the primary regime."""
+        state = self._trending_state()
+        self.assertIn(Regime.BULL_MARKET, state.all_regimes)
+        allowed, reason = is_strategy_type_allowed("momentum", state)
+        self.assertTrue(allowed)
+        self.assertIn("eligible via", reason)
+
+    def test_veto_still_overrides_any_permission(self) -> None:
+        """Widening permission must not let a vetoed strategy through."""
+        features = self.features.compute(series(random_walk(300)))
+        stressed = self.engine.classify(
+            features, MarketContext(spread_ratio=3.0, volume_ratio=0.3)
+        )
+        for strategy_type in ("momentum", "breakout", "reversal", "gap"):
+            allowed, _ = is_strategy_type_allowed(strategy_type, stressed)
+            self.assertFalse(allowed, f"{strategy_type} slipped past LIQUIDITY_STRESS")
+
+    def test_unlisted_strategy_type_is_still_refused(self) -> None:
+        """A type no active regime permits stays blocked by the union rule."""
+        state = self._trending_state()
+        allowed, reason = is_strategy_type_allowed("oscillator", state)
+        self.assertFalse(allowed)
+        self.assertIn("not in the allowed set", reason)
+
+    def test_explicit_veto_is_reported_as_a_veto(self) -> None:
+        """Short selling is disallowed in a bull market, and says so."""
+        allowed, reason = is_strategy_type_allowed("short", self._trending_state())
+        self.assertFalse(allowed)
+        self.assertIn("disallowed in BULL_MARKET", reason)

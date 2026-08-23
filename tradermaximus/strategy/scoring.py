@@ -40,6 +40,12 @@ COMPONENT_MAX: Mapping[str, float] = {
 }
 
 
+#: Strategy families that trade *against* the prevailing short-term move.
+#: Several scoring components mean something different for these, and applying
+#: the trend-following rubric to them measures the wrong thing entirely.
+COUNTER_TREND_TYPES: frozenset[str] = frozenset({"reversal", "mean_reversion"})
+
+
 def _scale(value: float, low: float, high: float, maximum: float) -> float:
     """Map ``value`` from ``[low, high]`` onto ``[0, maximum]``, clamped."""
     if high <= low:
@@ -76,9 +82,9 @@ class SignalScoringEngine:
         inputs = inputs or ScoringInputs()
         components: dict[str, float] = {
             "market_regime_alignment": self._regime_alignment(spec, regime),
-            "trend_alignment": self._trend_alignment(features, spec.side),
+            "trend_alignment": self._trend_alignment(features, spec.side, spec.strategy_type),
             "setup_quality": self._setup_quality(evaluation, features, inputs),
-            "volume_confirmation": self._volume_confirmation(features),
+            "volume_confirmation": self._volume_confirmation(features, spec.strategy_type),
             "relative_strength": self._relative_strength(features, inputs),
             "volatility_conditions": self._volatility_conditions(features, spec),
             "liquidity": self._liquidity(features, inputs),
@@ -124,8 +130,49 @@ class SignalScoringEngine:
         return round(base * maximum * regime.confidence, 4)
 
     @staticmethod
-    def _trend_alignment(features: FeatureSet, side: Side) -> float:
+    def _trend_alignment(features: FeatureSet, side: Side, strategy_type: str = "momentum") -> float:
+        """Points for trend context appropriate to the strategy family.
+
+        Section 7.1 defines this component in trend-following terms — MA stack,
+        ADX strength, higher highs and lows. Applied unmodified to a reversal
+        or mean-reversion setup it measures the wrong thing: such a setup has
+        none of those by construction, and scoring it as though it should is a
+        category error.
+
+        The consequence was not cosmetic. Section 5.4 routes counter-trend
+        strategies into RANGE and HIGH_VOLATILITY; section 7.2 sets the
+        *highest* minimum scores in exactly those regimes (70 and 75); and this
+        component was handing counter-trend setups 29% of its points. All
+        three cannot hold at once — measured, every one of 42 valid reversal
+        setups scored 42-64 against a threshold of 75 and none ever traded.
+
+        So for counter-trend families the component measures what actually
+        makes such a setup high quality: a constructive longer-term backdrop to
+        revert *into*, and the absence of a strong trend to fight.
+        """
         maximum = COMPONENT_MAX["trend_alignment"]
+
+        if strategy_type in COUNTER_TREND_TYPES:
+            score = 0.0
+            # Reverting into a healthy long-term uptrend is the best case (40%).
+            ma200 = features.number("ma200")
+            if ma200 is not None and features.close > ma200:
+                score += 0.40 * maximum
+            elif ma200 is not None and features.close > ma200 * 0.92:
+                score += 0.20 * maximum
+            # A strong trend is what kills reversals, so low ADX scores high (35%).
+            adx = features.number("adx_14")
+            if adx is not None:
+                score += _scale(-adx, -35.0, -12.0, 0.35 * maximum)
+            else:
+                score += 0.175 * maximum
+            # Stretched away from the mean is the setup itself (25%).
+            position = features.number("bb_position")
+            if position is not None:
+                stretch = max(0.0, 0.5 - position) * 2.0 if side is Side.LONG else max(0.0, position - 0.5) * 2.0
+                score += min(1.0, stretch) * 0.25 * maximum
+            return round(min(maximum, max(0.0, score)), 4)
+
         score = 0.0
 
         # Moving-average stack (up to 40% of the component).
@@ -177,8 +224,33 @@ class SignalScoringEngine:
         return round(min(maximum, score), 4)
 
     @staticmethod
-    def _volume_confirmation(features: FeatureSet) -> float:
+    def _volume_confirmation(features: FeatureSet, strategy_type: str = "momentum") -> float:
+        """Volume quality, read according to what the strategy needs.
+
+        A breakout wants *expanding* volume. A reversal at support wants either
+        exhaustion (volume dried up: sellers are finished) or capitulation (a
+        volume spike flushing the last holders). Both are textbook, and both
+        sit at the opposite end of the scale from "rising up-volume" — so the
+        trend rubric scored valid reversal setups at 9% of this component.
+        """
         maximum = COMPONENT_MAX["volume_confirmation"]
+
+        if strategy_type in COUNTER_TREND_TYPES:
+            relative = features.number("relative_volume")
+            if relative is None:
+                return 0.5 * maximum
+            if relative >= 1.8:
+                signature = min(1.0, (relative - 1.8) / 1.2 * 0.5 + 0.7)   # capitulation
+            elif relative <= 0.8:
+                signature = min(1.0, (0.8 - relative) / 0.5 * 0.4 + 0.6)   # exhaustion
+            else:
+                signature = 0.35        # neither: unremarkable volume
+            score = signature * 0.75 * maximum
+            # A/D turning up while price is at an extreme is accumulation.
+            if features.get("acc_dist_rising", False):
+                score += 0.25 * maximum
+            return round(min(maximum, score), 4)
+
         score = 0.0
         relative = features.number("relative_volume")
         if relative is not None:
