@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import timedelta
+from pathlib import Path
 
 from tradermaximus.core.errors import DataQualityError, ToolUnavailableError
 from tradermaximus.core.types import AssetClass, Candle, Instrument, Quote, Timeframe, utc_now
@@ -323,3 +324,145 @@ class TestEligibilitySemantics(unittest.TestCase):
         allowed, reason = is_strategy_type_allowed("short", self._trending_state())
         self.assertFalse(allowed)
         self.assertIn("disallowed in BULL_MARKET", reason)
+
+
+class TestForexVolumeHandling(unittest.TestCase):
+    """Spot FX has no consolidated volume; absent volume is not zero liquidity.
+
+    Regression: an all-zero volume column made every FX series fail on
+    ZERO_VOLUME_RUN and INSUFFICIENT_LIQUIDITY, so the entire asset class was
+    unvalidatable — real Oanda exports ship no volume column at all.
+    """
+
+    def setUp(self) -> None:
+        from tradermaximus.core.types import Instrument, Timeframe
+        from tradermaximus.data.series import CandleSeries
+
+        self.engine = DataQualityEngine()
+        candles = []
+        for i in range(400):
+            price = 1.10 + i * 0.0001
+            candles.append(
+                Candle(BASE + timedelta(days=i), price, price * 1.004, price * 0.996, price, 0.0)
+            )
+        self.fx = CandleSeries.build(
+            Instrument("EURUSD", AssetClass.FOREX, "FX", "FX", 0.00001, 1000.0, 1000.0),
+            Timeframe.D1,
+            candles,
+        )
+        self.equity = CandleSeries.build(
+            Instrument("FAKE", AssetClass.EQUITIES, "NASDAQ", "Tech", 0.01, 1.0, 1.0),
+            Timeframe.D1,
+            candles,
+        )
+
+    def test_forex_without_volume_passes(self) -> None:
+        report = self.engine.validate_series(
+            self.fx, min_history=300, enforce_staleness=False
+        )
+        self.assertTrue(report.passed, report.reason())
+
+    def test_equities_without_volume_still_fails(self) -> None:
+        """Equities have a consolidated tape; missing volume is genuinely bad."""
+        report = self.engine.validate_series(
+            self.equity, min_history=300, enforce_staleness=False
+        )
+        self.assertFalse(report.passed)
+        self.assertIn(
+            QualityIssue.ZERO_VOLUME_RUN, [f.issue for f in report.findings]
+        )
+
+    def test_forex_with_partial_volume_is_still_checked(self) -> None:
+        """A feed that does report volume gets the normal checks."""
+        from tradermaximus.core.types import Instrument, Timeframe
+        from tradermaximus.data.series import CandleSeries
+
+        candles = []
+        for i in range(400):
+            price = 1.10 + i * 0.0001
+            candles.append(
+                Candle(
+                    BASE + timedelta(days=i),
+                    price, price * 1.004, price * 0.996, price,
+                    0.0 if i > 10 else 5_000_000.0,
+                )
+            )
+        series_with_gaps = CandleSeries.build(
+            Instrument("GBPUSD", AssetClass.FOREX, "FX", "FX", 0.00001, 1000.0, 1000.0),
+            Timeframe.D1,
+            candles,
+        )
+        report = self.engine.validate_series(
+            series_with_gaps, min_history=300, enforce_staleness=False
+        )
+        self.assertIn(
+            QualityIssue.ZERO_VOLUME_RUN, [f.issue for f in report.findings]
+        )
+
+
+class TestCsvLoader(unittest.TestCase):
+    """Vendor CSV formats must all load, since real data arrives however it arrives."""
+
+    def _write(self, name: str, header: list[str], rows: list[list[str]]) -> str:
+        import csv
+        import tempfile
+
+        path = Path(tempfile.mkdtemp()) / name
+        with path.open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header)
+            writer.writerows(rows)
+        return str(path)
+
+    def test_yahoo_style_with_adjusted_close(self) -> None:
+        from tradermaximus.data.csv_loader import instrument_for, load_candles
+
+        path = self._write(
+            "AAPL.csv",
+            ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"],
+            [["2024-01-0%d" % d, "100", "101", "99", "100", "50", "1000000"] for d in range(1, 6)],
+        )
+        candles, read, skipped = load_candles(path)
+        self.assertEqual(len(candles), 5)
+        self.assertEqual(skipped, 0)
+        # Adjusted close halves the price; the whole bar scales with it.
+        self.assertAlmostEqual(candles[0].close, 50.0)
+        self.assertAlmostEqual(candles[0].open, 50.0)
+
+    def test_binance_style_epoch_milliseconds(self) -> None:
+        from tradermaximus.data.csv_loader import load_candles
+
+        path = self._write(
+            "BTC.csv",
+            ["open_time", "o", "h", "l", "c", "v"],
+            [[str(1514764800000 + i * 86400000), "100", "102", "98", "101", "5"] for i in range(4)],
+        )
+        candles, _, _ = load_candles(path)
+        self.assertEqual(len(candles), 4)
+        self.assertEqual(candles[0].timestamp.year, 2018)
+
+    def test_missing_required_column_is_reported(self) -> None:
+        from tradermaximus.core.errors import DataQualityError
+        from tradermaximus.data.csv_loader import load_candles
+
+        path = self._write("bad.csv", ["Date", "Open"], [["2024-01-01", "100"]])
+        with self.assertRaises(DataQualityError) as ctx:
+            load_candles(path)
+        self.assertIn("missing required column", str(ctx.exception))
+
+    def test_malformed_rows_are_skipped_not_fabricated(self) -> None:
+        from tradermaximus.data.csv_loader import load_candles
+
+        path = self._write(
+            "mixed.csv",
+            ["date", "open", "high", "low", "close", "volume"],
+            [
+                ["2024-01-01", "100", "101", "99", "100", "1000"],
+                ["2024-01-02", "", "N/A", "99", "100", "1000"],
+                ["2024-01-03", "101", "102", "100", "101", "1000"],
+            ],
+        )
+        candles, read, skipped = load_candles(path)
+        self.assertEqual(read, 3)
+        self.assertEqual(skipped, 1)
+        self.assertEqual(len(candles), 2)

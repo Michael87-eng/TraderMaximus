@@ -232,6 +232,23 @@ class DataQualityEngine:
                 gaps += int(round(delta / modal)) - 1
         return gaps
 
+    @staticmethod
+    def _volume_is_reported(series: CandleSeries) -> bool:
+        """Whether this feed reports volume at all.
+
+        Spot FOREX is decentralised: there is no consolidated tape, and most FX
+        feeds (Oanda among them) ship no volume column. An all-zero volume
+        column therefore means "not reported", not "nothing traded" — and
+        treating it as zero liquidity rejects every FX series outright, which
+        silently made the entire asset class unvalidatable.
+
+        Only FOREX gets this reading. An equity or crypto feed with no volume
+        is genuinely defective, because both have consolidated volume.
+        """
+        if series.instrument.asset_class is not AssetClass.FOREX:
+            return True
+        return any(candle.volume > 0 for candle in series)
+
     def _check_integrity(self, series: CandleSeries) -> list[QualityFinding]:
         findings: list[QualityFinding] = []
         invalid = [c for c in series if not c.is_valid()]
@@ -246,11 +263,12 @@ class DataQualityEngine:
         if any(c.volume < 0 for c in series):
             findings.append(QualityFinding(QualityIssue.NEGATIVE_VOLUME, "negative volume present"))
 
-        zero_run = _longest_zero_volume_run(series.volumes)
-        if zero_run >= 3:
-            findings.append(
-                QualityFinding(QualityIssue.ZERO_VOLUME_RUN, f"{zero_run} consecutive zero-volume bars")
-            )
+        if self._volume_is_reported(series):
+            zero_run = _longest_zero_volume_run(series.volumes)
+            if zero_run >= 3:
+                findings.append(
+                    QualityFinding(QualityIssue.ZERO_VOLUME_RUN, f"{zero_run} consecutive zero-volume bars")
+                )
         return findings
 
     def _check_outliers(self, series: CandleSeries) -> list[QualityFinding]:
@@ -295,6 +313,10 @@ class DataQualityEngine:
         asset_class = series.instrument.asset_class
         minimum = MIN_LIQUIDITY.get(asset_class, 0.0)
         if minimum <= 0 or len(series) < 5:
+            return []
+        if not self._volume_is_reported(series):
+            # No volume feed to measure. Liquidity must then be established from
+            # spread at execution time, which the pre-execution checklist does.
             return []
 
         avg_volume = series.average_volume(50)

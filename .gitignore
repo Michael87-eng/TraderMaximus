@@ -20,3 +20,7 @@ logs/
 !.env.example
 secrets.yaml
 state/
+
+# Licensed market data is never committed
+data/real/**/*.csv
+data/real/**/*.parquet
