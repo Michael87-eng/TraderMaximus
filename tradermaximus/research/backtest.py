@@ -65,6 +65,14 @@ class BacktestConfig:
     #: slowest indicator's warm-up (MA200 plus the 250-bar volatility
     #: percentile lookback); beyond that, older bars change nothing.
     decision_window: int = 400
+    #: Periods per year, used to annualise Sharpe and Sortino.
+    #:
+    #: This MUST match the bar interval. Annualising weekly bars at 252 inflates
+    #: Sharpe by sqrt(252/52) ~ 2.2x, which would turn a Sharpe of 0.3 into 0.67
+    #: and could carry a strategy through a deployment gate it never earned.
+    #: 252 for equities/FX daily, 365 for crypto daily (it trades every day),
+    #: 52 for weekly.
+    periods_per_year: int = 252
     max_positions: int = 10
     allow_shorts: bool = False
     benchmark_symbol: str | None = None
@@ -276,7 +284,11 @@ class Backtester:
         book.mark_equity(final)
 
         equity_curve = tuple(book.equity_curve)
-        metrics = compute_metrics(book.closed_trades, [e for _, e in equity_curve])
+        metrics = compute_metrics(
+            book.closed_trades,
+            [e for _, e in equity_curve],
+            periods_per_year=cfg.periods_per_year,
+        )
 
         return BacktestResult(
             trades=tuple(book.closed_trades),

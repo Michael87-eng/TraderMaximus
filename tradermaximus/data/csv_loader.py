@@ -196,6 +196,12 @@ def load_candles(
                     high = (high or 0.0) * factor
                     low = (low or 0.0) * factor
                     close = adjusted
+                    # Setting close to the adjusted value exactly while scaling
+                    # the others can leave high or low a single ULP on the wrong
+                    # side of it — enough to fail the OHLC ordering check on a
+                    # bar where low equalled close. Re-derive the extremes.
+                    high = max(high, open_, close)
+                    low = min(low, open_, close)
 
             if None in (timestamp, open_, high, low, close):
                 rows_skipped += 1
@@ -221,6 +227,13 @@ def load_candles(
     return candles, rows_read, rows_skipped
 
 
+def _has_adjusted_column(path: str | Path) -> bool:
+    """Whether the file provides an adjusted-close column."""
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as handle:
+        header = handle.readline()
+    return any(alias in header.lower() for alias in COLUMN_ALIASES["adj_close"])
+
+
 def load_series(
     path: str | Path,
     instrument: Instrument,
@@ -241,8 +254,17 @@ def load_series(
     )
     series = CandleSeries.build(instrument, timeframe, candles)
     engine = quality if quality is not None else DataQualityEngine()
+
+    # If the file carried an adjusted-close column and we used it, splits and
+    # dividends are already removed. Any remaining large jump is a real market
+    # move, so the corporate-action heuristic must not run — it would misread
+    # a genuine 50% crash as a 2:1 split purely from the ratio.
+    adjusted_applied = prefer_adjusted and _has_adjusted_column(path)
     report = engine.validate_series(
-        series, min_history=min_history, enforce_staleness=False
+        series,
+        min_history=min_history,
+        enforce_staleness=False,
+        prices_adjusted=adjusted_applied,
     )
     return LoadResult(
         series=series,

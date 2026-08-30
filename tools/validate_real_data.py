@@ -39,7 +39,7 @@ from typing import Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tradermaximus.core.types import AssetClass, Candle, Instrument, TradeRecord
+from tradermaximus.core.types import AssetClass, Candle, Instrument, Timeframe, TradeRecord
 from tradermaximus.data.csv_loader import LoadResult, load_directory
 from tradermaximus.indicators.core import realized_volatility
 from tradermaximus.observability.metrics import PerformanceMetrics, compute_metrics
@@ -60,6 +60,18 @@ ASSET_DIRS: Mapping[str, AssetClass] = {
     "equities": AssetClass.EQUITIES,
     "crypto": AssetClass.CRYPTO,
     "forex": AssetClass.FOREX,
+}
+
+#: Bar interval and annualisation factor per asset class.
+#:
+#: Alpha Vantage's free tier gates daily equity history behind a premium plan
+#: (only 100 bars), so equities are validated on *weekly* bars while crypto and
+#: FX use daily. The annualisation factor must follow the bar interval or the
+#: Sharpe comparison across classes is meaningless.
+TIMEFRAMES: Mapping[str, tuple[Timeframe, int]] = {
+    "equities": (Timeframe.W1, 52),
+    "crypto": (Timeframe.D1, 365),   # crypto trades every calendar day
+    "forex": (Timeframe.D1, 252),
 }
 
 
@@ -89,6 +101,8 @@ class AssetClassReport:
     walk_forward: list[PerformanceMetrics] = field(default_factory=list)
     monte_carlo_positive: float | None = None
     volatility_profile: dict[str, float] = field(default_factory=dict)
+    timeframe: str = "1d"
+    periods_per_year: int = 252
     strategy_breakdown: dict[str, dict[str, float]] = field(default_factory=dict)
     skipped: str = ""
 
@@ -116,16 +130,24 @@ def _run_segment(
     *,
     warmup: int,
     equity: float,
+    timeframe: Timeframe = Timeframe.D1,
+    periods_per_year: int = 252,
 ) -> SegmentResult:
     usable = {i: list(c) for i, c in universe.items() if len(c) > warmup + 30}
     if not usable:
         return SegmentResult(name, error=f"no symbol has more than {warmup + 30} bars")
     try:
         backtester = Backtester(
-            BacktestConfig(starting_equity=equity, warmup_bars=warmup, seed=7)
+            BacktestConfig(
+                starting_equity=equity,
+                warmup_bars=warmup,
+                seed=7,
+                periods_per_year=periods_per_year,
+            )
         )
         result = backtester.run(
             usable,
+            timeframe=timeframe,
             benchmark=list(benchmark) if benchmark else None,
             market_context=MarketContext(
                 breadth_index=0.5, new_highs_ratio=0.55, correlation_change=0.15
@@ -146,14 +168,17 @@ def validate_asset_class(
     walk_forward_windows: int,
 ) -> AssetClassReport:
     asset_class = ASSET_DIRS[label]
+    timeframe, periods_per_year = TIMEFRAMES[label]
     report = AssetClassReport(asset_class=asset_class)
+    report.timeframe = timeframe.value
+    report.periods_per_year = periods_per_year
 
     if not directory.is_dir() or not any(directory.glob("*.csv")):
         report.skipped = f"no CSV files in {directory}"
         return report
 
     loaded: dict[Instrument, LoadResult] = load_directory(
-        directory, asset_class=asset_class, min_history=warmup
+        directory, timeframe=timeframe, asset_class=asset_class, min_history=warmup
     )
     universe: dict[Instrument, list[Candle]] = {}
     for instrument, load in loaded.items():
@@ -163,9 +188,7 @@ def validate_asset_class(
         universe[instrument] = list(load.series.candles)
         report.symbols.append(instrument.symbol)
         report.bars = max(report.bars, len(load.series))
-        vol = realized_volatility(
-            load.series.closes, 20, 365 if asset_class is AssetClass.CRYPTO else 252
-        )
+        vol = realized_volatility(load.series.closes, 20, periods_per_year)
         if vol is not None:
             report.volatility_profile[instrument.symbol] = vol
 
@@ -190,10 +213,12 @@ def validate_asset_class(
     bench_tail = benchmark[max(0, len(bench_head) - warmup):]
 
     report.in_sample = _run_segment(
-        "in_sample", in_universe, bench_head, warmup=warmup, equity=equity
+        "in_sample", in_universe, bench_head, warmup=warmup, equity=equity,
+        timeframe=timeframe, periods_per_year=periods_per_year,
     )
     report.out_of_sample = _run_segment(
-        "out_of_sample", out_universe, bench_tail, warmup=warmup, equity=equity
+        "out_of_sample", out_universe, bench_tail, warmup=warmup, equity=equity,
+        timeframe=timeframe, periods_per_year=periods_per_year,
     )
 
     # -- walk-forward ------------------------------------------------------
@@ -211,7 +236,8 @@ def validate_asset_class(
             if not slice_universe:
                 continue
             segment = _run_segment(
-                f"wf_{index}", slice_universe, benchmark[start:end], warmup=warmup, equity=equity
+                f"wf_{index}", slice_universe, benchmark[start:end], warmup=warmup,
+                equity=equity, timeframe=timeframe, periods_per_year=periods_per_year,
             )
             if segment.ok:
                 report.walk_forward.append(segment.metrics)
@@ -262,6 +288,7 @@ def print_report(report: AssetClassReport) -> None:
         print(f"  SKIPPED: {report.skipped}\n")
         return
 
+    print(f"  timeframe: {report.timeframe} (annualised at {report.periods_per_year}/yr)")
     print(f"  symbols: {', '.join(report.symbols) or 'none usable'}")
     for symbol, summary in sorted(report.loaded.items()):
         print(f"    {summary}")

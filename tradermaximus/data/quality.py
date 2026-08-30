@@ -141,6 +141,7 @@ class DataQualityEngine:
         min_history: int = 50,
         now: datetime | None = None,
         enforce_staleness: bool = True,
+        prices_adjusted: bool = False,
     ) -> QualityReport:
         """Run every section 3.2 check and produce a scored report.
 
@@ -149,6 +150,11 @@ class DataQualityEngine:
             now: injected clock, so backtests validate against bar time rather
                 than wall-clock time.
             enforce_staleness: disabled during backtests where every bar is old.
+            prices_adjusted: the feed already removed splits and dividends, so
+                the corporate-action heuristic is skipped. Without this, a real
+                50% single-session crash (AAPL on 2000-09-29, for one) is
+                indistinguishable by ratio from a 2:1 split and the whole
+                series gets thrown away.
         """
         findings: list[QualityFinding] = []
         instrument = series.instrument
@@ -172,7 +178,7 @@ class DataQualityEngine:
 
         findings.extend(self._check_timestamps(series))
         findings.extend(self._check_integrity(series))
-        findings.extend(self._check_outliers(series))
+        findings.extend(self._check_outliers(series, prices_adjusted=prices_adjusted))
         findings.extend(self._check_liquidity(series))
         if enforce_staleness:
             findings.extend(self._check_freshness(series, now or utc_now()))
@@ -271,11 +277,36 @@ class DataQualityEngine:
                 )
         return findings
 
-    def _check_outliers(self, series: CandleSeries) -> list[QualityFinding]:
-        """Flag implausible jumps, separating outliers from corporate actions.
+    @staticmethod
+    def _reverts_immediately(moves: Sequence[float], index: int, tolerance: float = 0.35) -> bool:
+        """Whether a large move is undone by the very next bar.
 
-        A single ~50% overnight drop with normal volume is far more likely to be
-        an unadjusted split than a real move, so it is reported as such.
+        This is what separates a bad tick from real market history. A corrupt
+        print spikes and snaps back; a genuine crash persists. Bitcoin fell 40%
+        on 2020-03-12 and stayed down — treating that as a data error would
+        reject the single most informative stretch of crypto history there is,
+        which is precisely the stretch a risk system most needs to be tested on.
+        """
+        if index + 1 >= len(moves):
+            return False
+        forward = moves[index + 1]
+        # A true revert is equal and opposite: -40% followed by ~+67%.
+        implied_recovery = (1.0 / (1.0 + moves[index])) - 1.0 if moves[index] > -1 else 0.0
+        if implied_recovery == 0:
+            return False
+        return abs(forward - implied_recovery) / abs(implied_recovery) < tolerance
+
+    def _check_outliers(
+        self, series: CandleSeries, *, prices_adjusted: bool = False
+    ) -> list[QualityFinding]:
+        """Flag implausible jumps, separating data errors from real moves.
+
+        Three cases, and conflating them is what makes a quality engine reject
+        good data:
+
+        * an unadjusted split, recognisable by its ratio;
+        * a bad tick, recognisable because the next bar undoes it;
+        * a genuine crash, which persists and must be kept.
         """
         findings: list[QualityFinding] = []
         closes = series.closes
@@ -291,7 +322,11 @@ class DataQualityEngine:
         stdev = variance ** 0.5
 
         for index, move in enumerate(moves):
-            if abs(move) >= self.corporate_action_jump and _looks_like_ratio(move):
+            if (
+                not prices_adjusted
+                and abs(move) >= self.corporate_action_jump
+                and _looks_like_ratio(move)
+            ):
                 findings.append(
                     QualityFinding(
                         QualityIssue.UNADJUSTED_CORPORATE_ACTION,
@@ -300,13 +335,17 @@ class DataQualityEngine:
                 )
                 break
             if stdev > 0 and abs(move - mean) > self.outlier_sigma * stdev:
-                findings.append(
-                    QualityFinding(
-                        QualityIssue.PRICE_OUTLIER,
-                        f"{move:+.1%} move at bar {index + 1} exceeds {self.outlier_sigma} sigma",
+                if self._reverts_immediately(moves, index):
+                    findings.append(
+                        QualityFinding(
+                            QualityIssue.PRICE_OUTLIER,
+                            f"{move:+.1%} move at bar {index + 1} is undone by the next bar; "
+                            "this is a bad tick, not a market move",
+                        )
                     )
-                )
-                break
+                    break
+                # Persistent: a real move, however extreme. Not a data defect.
+                continue
         return findings
 
     def _check_liquidity(self, series: CandleSeries) -> list[QualityFinding]:
