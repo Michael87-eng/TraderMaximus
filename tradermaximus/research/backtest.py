@@ -51,11 +51,12 @@ from ..regime.engine import (
 from ..risk.engine import RiskContext, RiskEngine
 from ..risk.limits import HardLimits
 from ..risk.stops import StopLossEngine
-from ..risk.targets import TakeProfitEngine
+from ..risk.targets import LADDERS, TakeProfitEngine
 from ..risk.trailing import TrailingStopEngine
 from ..strategy.engine import StrategyEngine
+from ..strategy.library import MOMENTUM_BREAKOUT
 from ..strategy.scoring import ScoringInputs
-from ..strategy.spec import EvalContext, Fundamentals
+from ..strategy.spec import EvalContext, Fundamentals, StrategySpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,9 @@ class BacktestConfig:
     starting_equity: float = 100_000.0
     warmup_bars: int = 250
     commission_bps: float = 1.0
+    #: Quoted spread handed to the score's liquidity component, in basis
+    #: points. Matches the paper broker's MarketState default.
+    spread_bps: float = 5.0
     impact_coefficient_bps: float = 120.0
     partial_fill_probability: float = 0.0
     random_slippage_bps: float = 2.0
@@ -119,6 +123,66 @@ class BacktestResult:
             "bars": self.bars_processed,
             **self.metrics.as_dict(),
         }
+
+
+def derived_scoring_inputs(
+    features: FeatureSet,
+    spec: StrategySpec,
+    *,
+    benchmark_return: float | None = None,
+    spread_bps: float | None = None,
+) -> ScoringInputs:
+    """Fill in the score's context from what the backtest already knows.
+
+    Two of the nine scoring components take their values from
+    :class:`ScoringInputs` rather than from the feature set, and a backtest
+    that leaves them unset does not score a neutral value for them — it scores
+    *zero*. ``risk_reward`` is worth 5 of the 90 available points and returns
+    0.0 when the ratio is ``None``; ``relative_strength`` is worth 10 and loses
+    three-quarters of them without a rating and a sector reading. Together that
+    is about 14% of the scale, deducted from every signal in the backtest and
+    from no signal in live trading, where a broker quote and a target ladder
+    supply the same numbers.
+
+    That deduction is what kept real equity setups scoring in the low 60s
+    against a 75 bar while the same setups measured a median of 78 when the
+    inputs were supplied. Both are computable here:
+
+    * **risk/reward** is the first target rung over the stop distance, both
+      known at decision time from the strategy's own spec.
+    * **relative strength** is the instrument's own trailing return measured
+      against the benchmark's over the same window, mapped onto the 0-99 scale
+      the component expects.
+
+    ``sector_strength`` stays ``None``: real sector data is not loaded, and
+    inventing it would be scoring a number nobody measured.
+    """
+    atr = features.number("atr_14")
+    close = features.close
+    risk_reward: float | None = None
+    if atr and atr > 0 and close > 0:
+        stop_distance = atr * spec.stop.atr_multiplier
+        ladder = LADDERS.get(spec.target_ladder)
+        if ladder is not None and ladder.targets and stop_distance > 0:
+            risk_reward = (ladder.targets[0].gain_pct * close) / stop_distance
+
+    rating: float | None = None
+    if benchmark_return is not None:
+        own = features.number("roc_10")
+        if own is not None:
+            # Rate of change is a percentage, so the excess is in percentage
+            # points. A 30-point excess over the benchmark earns full marks;
+            # matching the benchmark scores the 50 the component treats as
+            # neutral.
+            excess = own - benchmark_return
+            rating = max(0.0, min(99.0, 50.0 + excess * 1.65))
+
+    return ScoringInputs(
+        average_daily_volume=features.number("avg_volume_50"),
+        spread_bps=spread_bps,
+        relative_strength_rating=rating,
+        risk_reward_ratio=risk_reward,
+    )
 
 
 class Backtester:
@@ -220,6 +284,7 @@ class Backtester:
                 continue
 
             regime = self._regime(regime_engine, benchmark_series, series_by_symbol, now, market_context)
+            benchmark_return = self._benchmark_return(benchmark_series, now)
             threshold = minimum_score(regime)
             if threshold is None:
                 continue
@@ -241,11 +306,19 @@ class Backtester:
                     features=features,
                     fundamentals=self.fundamentals.get(symbol, Fundamentals()),
                 )
-                inputs = (
-                    self.scoring_inputs(symbol, features)
-                    if self.scoring_inputs
-                    else ScoringInputs(average_daily_volume=features.number("avg_volume_50"))
-                )
+                if self.scoring_inputs:
+                    inputs = self.scoring_inputs(symbol, features)
+                else:
+                    inputs = derived_scoring_inputs(
+                        features,
+                        # The inputs are per-signal, but the spec is not known
+                        # until selection. Momentum's ladder is the default and
+                        # the least generous, so using it here cannot flatter a
+                        # signal that turns out to belong to another family.
+                        MOMENTUM_BREAKOUT,
+                        benchmark_return=benchmark_return,
+                        spread_bps=cfg.spread_bps,
+                    )
                 selection = self.strategy_engine.select(
                     instrument=instrument,
                     features=features,
@@ -345,6 +418,24 @@ class Backtester:
             if len(visible):
                 prices[symbol] = visible.last.close
         return prices
+
+    def _benchmark_return(
+        self, benchmark: CandleSeries | None, now: datetime
+    ) -> float | None:
+        """The benchmark's own 10-bar rate of change, as of this bar.
+
+        Relative strength is a comparison; without the other side of it the
+        component can only be guessed at, which is why it was left unset and
+        scored zero.
+        """
+        if benchmark is None:
+            return None
+        visible = benchmark.slice_until(now)
+        if len(visible) < 12:
+            return None
+        return self.features.compute(
+            visible.tail(400), detect_bases=False
+        ).number("roc_10")
 
     def _regime(
         self,

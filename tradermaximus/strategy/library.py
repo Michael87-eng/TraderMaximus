@@ -336,7 +336,20 @@ PULLBACK_MA_BOUNCE = StrategySpec(
 
 
 # ---------------------------------------------------------------------------
-# 6.2.3 Gap strategy (equities / crypto)
+# 6.2.3 Gap strategy (equities only)
+#
+# Crypto was removed from this spec's asset classes, and the reason is
+# structural rather than a matter of performance. A gap is the price change
+# across a session boundary, and a 24/7 market has no session boundary to gap
+# across. Measured on 2,499 daily BTC-USD bars: median open-to-previous-close
+# gap 0.04%, 99th percentile 0.61%, maximum 1.59%, and *zero* bars at or above
+# the 3% this strategy requires. The gate autopsy agrees — 2,466 of 2,467
+# eligible crypto bars died on `gap_up_3%`.
+#
+# No threshold would fix this. A 3% gap threshold lowered until crypto trades
+# would no longer be measuring a gap; it would be measuring an ordinary
+# overnight drift and calling it one. The strategy is disabled for crypto
+# rather than retuned for it.
 # ---------------------------------------------------------------------------
 
 GAP_STRATEGY = StrategySpec(
@@ -344,7 +357,7 @@ GAP_STRATEGY = StrategySpec(
     name="Gap Up Continuation",
     strategy_type="gap",
     side=Side.LONG,
-    asset_classes=frozenset({AssetClass.EQUITIES, AssetClass.CRYPTO}),
+    asset_classes=EQUITIES_ONLY,
     entry_conditions=(
         _gap_up(0.03),
         feature_above("relative_volume", 2.0, name="relative_volume_above_2.0"),
@@ -355,7 +368,7 @@ GAP_STRATEGY = StrategySpec(
     target_ladder="gap",
     min_data_points=100,
     max_holding_days=10,
-    notes="Section 6.2.3. Requires the gap to hold rather than fill.",
+    notes="Section 6.2.3. Requires the gap to hold rather than fill. Equities only: a 24/7 market has no session boundary to gap across.",
 )
 
 

@@ -127,7 +127,15 @@ class SignalScoringEngine:
             if spec.strategy_type in ALLOWED_STRATEGY_TYPES.get(tag, frozenset())
         )
         base = min(1.0, base + 0.10 * supporting)
-        return round(base * maximum * regime.confidence, 4)
+
+        # Phase 3: a regime that actively favours this family weights its
+        # alignment up. Clamped to the component's own maximum, so a preference
+        # can never push the signal total past the 0-100 scale — the bar a
+        # signal must clear stays the bar it was set at.
+        from ..regime.engine import family_regime_weight
+
+        weight = family_regime_weight(spec.strategy_type, regime)
+        return round(min(maximum, base * maximum * regime.confidence * weight), 4)
 
     @staticmethod
     def _trend_alignment(features: FeatureSet, side: Side, strategy_type: str = "momentum") -> float:

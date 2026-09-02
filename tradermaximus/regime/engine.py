@@ -292,6 +292,68 @@ REGIME_FAMILY_SIZE_MULTIPLIER: Mapping[tuple[Regime, str], float] = {
 }
 
 
+#: Families each regime actively favours, and the weight the Phase 3 brief
+#: assigns them. **Not applied by default** — see below.
+FAVOURED_FAMILY_WEIGHT: Mapping[tuple[Regime, str], float] = {
+    (Regime.TREND_UP, "momentum"): 1.5,
+    (Regime.TREND_UP, "breakout"): 1.5,
+    (Regime.TREND_UP, "can_slim"): 1.5,
+    (Regime.TREND_UP, "pullback"): 1.5,
+    (Regime.BULL_MARKET, "momentum"): 1.5,
+    (Regime.BULL_MARKET, "breakout"): 1.5,
+    (Regime.BULL_MARKET, "can_slim"): 1.5,
+    (Regime.RANGE, "mean_reversion"): 1.5,
+    (Regime.RANGE, "oscillator"): 1.5,
+    (Regime.HIGH_VOLATILITY, "reversal"): 1.5,
+    (Regime.VOLATILITY_EXPANSION, "reversal"): 1.5,
+}
+
+#: The weights actually in force. Empty: the mechanism is built, tested and
+#: available, and it is switched off.
+#:
+#: It was applied and measured. On the only asset class with enough trades to
+#: measure anything — nine years of real EURUSD and GBPUSD — weighting mean
+#: reversion up in RANGE took the trade count from 48 to 72 and in-sample
+#: profit factor from 1.47 to 1.04. The 24 additional trades were, in
+#: aggregate, losers.
+#:
+#: The reason is worth stating because the design note originally got it wrong.
+#: Clamping the weighted value to the component's own maximum does keep the
+#: score inside 0-100, and it was argued from that that "the bar a signal must
+#: clear stays the bar it was set at". True, and beside the point: the *score*
+#: rises, so setups that previously fell short of their family bar now clear
+#: it. Where the component was not already at its maximum — which is the normal
+#: case — a 1.5x weight is a threshold loosening wearing the clothes of a
+#: preference. Mean reversion already trades on a lowered bar of 50; adding a
+#: score bonus on top double-counts the same preference.
+#:
+#: Set this to FAVOURED_FAMILY_WEIGHT to re-enable, and re-validate before
+#: trusting it.
+REGIME_FAMILY_WEIGHT: Mapping[tuple[Regime, str], float] = {}
+
+
+def family_regime_weight(
+    strategy_type: str,
+    state: RegimeState,
+    weights: Mapping[tuple[Regime, str], float] | None = None,
+) -> float:
+    """How strongly the current regime favours this family.
+
+    The largest applicable weight across every active regime wins: a market
+    that is both TREND_UP and RANGE is ambiguous, and a family should not be
+    penalised for the classifier being unsure.
+
+    Returns 1.0 for everything under the default weights, which are empty.
+    """
+    table = REGIME_FAMILY_WEIGHT if weights is None else weights
+    applicable = [
+        table[(regime, strategy_type)]
+        for regime in state.all_regimes
+        if (regime, strategy_type) in table
+    ]
+    return max(applicable) if applicable else 1.0
+
+
 def family_minimum_score(strategy_type: str) -> float:
     """The score a signal of this family must reach (see FAMILY_MIN_SCORE)."""
     return FAMILY_MIN_SCORE.get(strategy_type, 75.0)

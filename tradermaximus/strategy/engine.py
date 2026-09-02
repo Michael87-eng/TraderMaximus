@@ -19,7 +19,7 @@ never evaluated at all, so it can never be "too good to pass up".
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from ..core.types import AssetClass, Instrument, ScoreBreakdown, Signal, Timeframe
 from ..indicators.engine import FeatureEngine, FeatureSet
@@ -88,12 +88,17 @@ class StrategyEngine:
         features: FeatureEngine | None = None,
         journal: Journal | None = None,
         require_multi_timeframe: bool = True,
+        is_enabled: Callable[[str], bool] | None = None,
     ) -> None:
         self.strategies = list(strategies)
         self.scorer = scorer if scorer is not None else SignalScoringEngine()
         self.features = features if features is not None else FeatureEngine()
         self.journal = journal if journal is not None else NULL_JOURNAL
         self.require_multi_timeframe = require_multi_timeframe
+        # Drift gate (section 21.2 / 31.2). A strategy the monitor has disabled
+        # is not merely down-weighted, it is not a candidate: down-weighting a
+        # strategy whose edge has decayed still trades it, just smaller.
+        self.is_enabled = is_enabled
 
     def select(
         self,
@@ -117,6 +122,8 @@ class StrategyEngine:
 
         candidates: list[Candidate] = []
         for spec in self.strategies:
+            if self.is_enabled is not None and not self.is_enabled(spec.id):
+                continue
             candidate = self._evaluate(spec, instrument, features, regime, context, inputs)
             if candidate is not None:
                 candidates.append(candidate)

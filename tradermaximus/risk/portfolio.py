@@ -158,6 +158,52 @@ def pearson_correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
     return cov / math.sqrt(var_x * var_y)
 
 
+#: Phase 3 correlation sizing. Above this correlation with something already
+#: held, a new position is not diversification — it is more of the same trade.
+CORRELATION_THRESHOLD = 0.70
+#: How much of the position to give up when that is the case.
+CORRELATION_REDUCTION = 0.30
+#: Rolling window, in bars, the correlation is measured over.
+CORRELATION_WINDOW = 20
+
+
+def correlation_size_multiplier(
+    candidate: Sequence[float],
+    held: Mapping[str, Sequence[float]],
+    *,
+    threshold: float = CORRELATION_THRESHOLD,
+    reduction: float = CORRELATION_REDUCTION,
+    window: int = CORRELATION_WINDOW,
+) -> tuple[float, float | None]:
+    """Shrink a position that duplicates risk already on the book.
+
+    Returns ``(multiplier, worst_correlation)``. Two positions correlated at
+    0.9 are not two bets, they are one bet at double size, and the per-trade
+    risk cap does not see that because it looks at each trade alone.
+
+    Measured over the most recent ``window`` bars, so it tracks the correlation
+    the portfolio has *now* rather than a long-run average that may predate the
+    regime. Returns a multiplier of 1.0 and ``None`` when there is nothing held
+    to compare against, or too little overlapping history to measure — an
+    unmeasurable correlation is not evidence of independence, but neither is it
+    grounds for a reduction nobody computed.
+    """
+    if not held or len(candidate) < 3:
+        return 1.0, None
+
+    recent = list(candidate[-window:])
+    worst: float | None = None
+    for series in held.values():
+        value = pearson_correlation(recent, list(series[-window:]))
+        if value is None:
+            continue
+        worst = value if worst is None else max(worst, value)
+
+    if worst is None or worst <= threshold:
+        return 1.0, worst
+    return max(0.0, 1.0 - reduction), worst
+
+
 def correlation_matrix(returns_by_symbol: Mapping[str, Sequence[float]]) -> dict[tuple[str, str], float]:
     """Pairwise correlations, keyed by sorted symbol pair."""
     matrix: dict[tuple[str, str], float] = {}

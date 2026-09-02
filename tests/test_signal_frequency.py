@@ -84,26 +84,39 @@ class TestSignalFrequency(unittest.TestCase):
         )
 
     def test_signal_rate_is_in_the_expected_band(self) -> None:
-        """Between 6 and 40 signals per 640 bars across the universe.
+        """Between 6 and 70 signals per 640 bars across the universe.
 
         Below the floor means something has become unsatisfiable. Above the
         ceiling means a filter that was doing real work has been loosened.
 
-        The ceiling was 25 while every family cleared one regime-derived bar.
-        Family-specific bars (section 7.2 as amended in docs/CALIBRATION.md)
-        let counter-trend setups qualify at 60 and mean reversion at 50, and
-        the observed rate moved to 28 per 640 bars over 8 symbols — about one
-        signal per symbol per 180 bars. The ceiling is re-anchored at 40 to
-        sit above that with room for generator noise, and deliberately not
-        higher: the point of the guard is that the next loosening still trips
-        it. Momentum, breakout and gap keep their 75 bar untouched.
+        The ceiling has been raised twice, and both times the reason had to be
+        established before the number was moved:
+
+        * 25 -> 40 when the mean-reversion family bar was lowered to 50 under
+          the conservative-fallback protocol.
+        * 40 -> 70 when the backtester began supplying the scoring inputs it
+          could always have computed. ``risk_reward`` was scoring 0 for want of
+          a ratio and ``relative_strength`` was losing three-quarters of its
+          points for want of a benchmark comparison — about 14 points of the
+          100-point scale, deducted from every signal in the backtest and from
+          no signal in live trading. Correcting that raises every score, so
+          more signals clear their bar.
+
+        That correction is not free, and the cost is recorded in
+        docs/PHASE_REPORT.md: those 14 points were doing filtering work, and
+        removing the deduction admitted marginal setups that lost money. The
+        thresholds were implicitly calibrated against an under-scored system
+        and are now roughly 14 points too lenient. Recalibrating them is future
+        work that needs market data this round has not looked at — picking the
+        offset that maximises profit factor on *this* history is precisely the
+        overfitting the exercise exists to avoid.
         """
         per_640 = self.result.signals_generated / self.result.bars_processed * 640
         self.assertGreaterEqual(
             per_640, 6.0, f"only {per_640:.1f} signals per 640 bars; a gate has tightened"
         )
         self.assertLessEqual(
-            per_640, 40.0, f"{per_640:.1f} signals per 640 bars; a filter has been loosened"
+            per_640, 70.0, f"{per_640:.1f} signals per 640 bars; a filter has been loosened"
         )
 
     def test_trades_reach_execution(self) -> None:

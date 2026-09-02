@@ -63,6 +63,28 @@ correct — a condition that cannot be measured must not be assumed true. The
 ATR mean-reversion spec (STRATEGY_010) uses no volume condition and runs
 regardless.
 
+## A note on crypto and corporate actions
+
+The `unadjusted_corporate_action` heuristic applies to **equities only**.
+Crypto and FX have no splits or dividends to be unadjusted for, so a move that
+happens to land near a 1:2 ratio on those classes is always a real one.
+Applying the heuristic anyway rejected SOL-USD outright on its -48.5% bar of
+2022-11-08 — the FTX collapse, and the single most informative day in that
+series.
+
+## Symbols currently used
+
+| class | symbols | interval | note |
+|---|---|---|---|
+| equities | SPY, AAPL, MSFT, NVDA, TSLA | **weekly** | daily history is premium-gated on every feed reachable from here |
+| crypto | BTC-USD, ETH-USD, SOL-USD | daily | real exchange history, not testnet — testnet has no genuine price series to backtest against |
+| forex | EURUSD, GBPUSD | daily | no volume column, as above |
+
+The weekly equity interval is not a preference. It has a direct cost: on weekly
+bars the median structural stop distance is 7.20% against a 7% cap, so half of
+all equity signals are correctly refused on stop placement. See
+`docs/PHASE_REPORT.md`.
+
 ## Nothing here is committed
 
 `data/real/*.csv` is git-ignored. Market data is usually licensed, and

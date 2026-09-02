@@ -39,6 +39,13 @@ class AssetLimits:
     min_stop_pct: float
     max_leverage: float = 0.0
     trailing_pct: float = 0.05
+    #: How many positions this asset class may hold at once (Phase 6).
+    #:
+    #: A portfolio-wide cap alone lets one class crowd out the others: ten
+    #: correlated crypto positions and no equities is not a diversified book,
+    #: but it satisfies "max 10 positions" perfectly. The per-class cap is what
+    #: makes the portfolio limit mean something.
+    max_positions: int = 10
 
     def risk_per_trade(self, volatility: float | None) -> float:
         """Risk budget for the given annualised volatility.
@@ -70,6 +77,7 @@ EQUITIES_LIMITS = AssetLimits(
     max_stop_pct=0.07,
     min_stop_pct=0.04,
     trailing_pct=0.06,
+    max_positions=10,
 )
 
 CRYPTO_LIMITS = AssetLimits(
@@ -87,6 +95,11 @@ CRYPTO_LIMITS = AssetLimits(
     max_stop_pct=0.05,
     min_stop_pct=0.02,
     trailing_pct=0.11,
+    # Crypto positions correlate hard in a drawdown — in March 2020 and
+    # November 2022 essentially every pair moved together — so the class is
+    # held to three concurrent positions however many symbols are in the
+    # universe.
+    max_positions=3,
 )
 
 FOREX_LIMITS = AssetLimits(
@@ -104,6 +117,9 @@ FOREX_LIMITS = AssetLimits(
     max_stop_pct=0.05,
     min_stop_pct=0.015,
     trailing_pct=0.04,
+    # Major pairs share the dollar leg, so they are near-duplicates of one
+    # another far more often than equities are.
+    max_positions=4,
 )
 
 ASSET_LIMITS: Mapping[AssetClass, AssetLimits] = {

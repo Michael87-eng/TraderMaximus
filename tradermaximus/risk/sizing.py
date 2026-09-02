@@ -78,6 +78,8 @@ class PositionSizingEngine:
         limits: HardLimits | None = None,
         *,
         baseline_volatility: Mapping[AssetClass, float] | None = None,
+        volatility_target: float | None = None,
+        max_volatility_scale: float = 1.0,
     ) -> None:
         self.limits = limits or HardLimits()
         # Section 18.3 reference volatilities. A market running hotter than its
@@ -87,6 +89,21 @@ class PositionSizingEngine:
             AssetClass.CRYPTO: 0.60,
             AssetClass.FOREX: 0.10,
         }
+        # -- volatility targeting (Phase 5) ---------------------------------
+        #
+        # When set, one annualised volatility figure replaces the per-class
+        # baselines, so every instrument is sized toward the same volatility
+        # contribution instead of toward its own class's normal.
+        #
+        # ``max_volatility_scale`` caps the scale-up. It defaults to 1.0, which
+        # means targeting can only ever shrink a position, because raising it
+        # is the one direction that adds risk: EURUSD runs at about 4%
+        # annualised volatility, so an uncapped 15% target would ask for 3.75x
+        # the position and breach section 18.3's "only ever scales down". Raise
+        # this only deliberately; the section 8.1 per-trade risk cap still
+        # binds either way.
+        self.volatility_target = volatility_target
+        self.max_volatility_scale = max(0.0, max_volatility_scale)
 
     def size(
         self,
@@ -140,10 +157,15 @@ class PositionSizingEngine:
         risk_pct = min(asset_risk_pct, self.limits.max_risk_per_trade)
 
         volatility_adjustment = 1.0
-        if apply_volatility_scaling and volatility:
-            baseline = self.baseline_volatility.get(instrument.asset_class, volatility)
-            # Section 18.3: only ever scales down.
-            volatility_adjustment = min(1.0, baseline / volatility) if volatility > 0 else 1.0
+        if apply_volatility_scaling and volatility and volatility > 0:
+            reference = (
+                self.volatility_target
+                if self.volatility_target is not None
+                else self.baseline_volatility.get(instrument.asset_class, volatility)
+            )
+            volatility_adjustment = min(
+                self.max_volatility_scale, reference / volatility
+            )
 
         effective_multiplier = max(0.0, regime_multiplier) * volatility_adjustment
         risk_budget = equity * risk_pct * effective_multiplier

@@ -47,14 +47,25 @@ from tradermaximus.regime.engine import MarketContext
 from tradermaximus.research.backtest import BacktestConfig, Backtester, BacktestResult
 from tradermaximus.research.validation import (
     AcceptanceCriteria,
+    Fold,
     StrategyValidator,
     monte_carlo,
+    plan_walk_forward_folds,
 )
 from tradermaximus.risk.limits import limits_for
 
-#: The gate the user set for opening a pull request.
-OOS_MIN_PROFIT_FACTOR = 1.3
+#: The gates that must all hold before deployment.
+CRITERIA = AcceptanceCriteria()
+OOS_MIN_PROFIT_FACTOR = CRITERIA.min_profit_factor_oos      # 1.3
 OOS_MIN_SHARPE = 0.7
+MAX_DRAWDOWN = CRITERIA.max_drawdown                        # 5%
+WF_FOLDS = CRITERIA.required_walk_forward_folds             # 5
+WF_MIN_WINDOW_PF = CRITERIA.min_walk_forward_window_pf      # 1.3 per window
+MC_SIMULATIONS = CRITERIA.monte_carlo_simulations           # 5000
+MC_MIN_PROFITABLE = CRITERIA.min_monte_carlo_profitable     # 90%
+#: OOS Sharpe must retain this fraction of in-sample Sharpe, or the strategy
+#: is judged to have decayed out of sample and is disabled rather than tuned.
+MIN_SHARPE_RETENTION = CRITERIA.min_oos_sharpe_ratio        # 80%
 
 ASSET_DIRS: Mapping[str, AssetClass] = {
     "equities": AssetClass.EQUITIES,
@@ -72,6 +83,16 @@ TIMEFRAMES: Mapping[str, tuple[Timeframe, int]] = {
     "equities": (Timeframe.W1, 52),
     "crypto": (Timeframe.D1, 365),   # crypto trades every calendar day
     "forex": (Timeframe.D1, 252),
+}
+
+#: Walk-forward fold geometry: (train bars, test bars) for "three years train,
+#: one year test" expressed in each class's own bar interval. Equities are
+#: weekly, so three years is 156 bars — fewer than an MA200 needs, which is why
+#: the planner also takes the indicator warm-up as a floor.
+WF_GEOMETRY: Mapping[str, tuple[int, int]] = {
+    "equities": (156, 52),      # 3 years / 1 year of weekly bars
+    "crypto": (1095, 365),      # crypto trades every calendar day
+    "forex": (756, 252),        # 252 trading days a year
 }
 
 
@@ -99,22 +120,106 @@ class AssetClassReport:
     in_sample: SegmentResult | None = None
     out_of_sample: SegmentResult | None = None
     walk_forward: list[PerformanceMetrics] = field(default_factory=list)
+    folds: list[Fold] = field(default_factory=list)
+    fold_note: str = ""
     monte_carlo_positive: float | None = None
+    monte_carlo_simulations: int = 0
+    signals_generated: int = 0
+    signals_rejected: int = 0
+    rejection_reasons: dict[str, int] = field(default_factory=dict)
     volatility_profile: dict[str, float] = field(default_factory=dict)
     timeframe: str = "1d"
     periods_per_year: int = 252
     strategy_breakdown: dict[str, dict[str, float]] = field(default_factory=dict)
     skipped: str = ""
 
+    # -- individual gates ---------------------------------------------------
+
     @property
-    def passes_gate(self) -> bool:
-        """The user's OOS gate: PF > 1.3 and Sharpe > 0.7."""
+    def gate_oos(self) -> tuple[bool, str]:
+        """Out-of-sample profit factor and Sharpe."""
         if not (self.out_of_sample and self.out_of_sample.ok):
-            return False
+            return False, "no out-of-sample result"
         m = self.out_of_sample.metrics
         if m.trade_count == 0:
-            return False
-        return m.profit_factor > OOS_MIN_PROFIT_FACTOR and m.sharpe > OOS_MIN_SHARPE
+            return False, "no out-of-sample trades"
+        ok = m.profit_factor > OOS_MIN_PROFIT_FACTOR and m.sharpe > OOS_MIN_SHARPE
+        return ok, (
+            f"OOS PF {m.profit_factor:.2f} (need >{OOS_MIN_PROFIT_FACTOR}), "
+            f"Sharpe {m.sharpe:.2f} (need >{OOS_MIN_SHARPE}), {m.trade_count} trades"
+        )
+
+    @property
+    def gate_walk_forward(self) -> tuple[bool, str]:
+        """Every rolling test window must clear the profit-factor bar itself."""
+        if len(self.walk_forward) < WF_FOLDS:
+            return False, (
+                f"{len(self.walk_forward)} of {WF_FOLDS} folds ran"
+                + (f" ({self.fold_note})" if self.fold_note else "")
+            )
+        clearing = [m for m in self.walk_forward if m.profit_factor > WF_MIN_WINDOW_PF]
+        pfs = ", ".join(
+            ("inf" if m.profit_factor == float("inf") else f"{m.profit_factor:.2f}")
+            for m in self.walk_forward
+        )
+        return len(clearing) == len(self.walk_forward), (
+            f"{len(clearing)}/{len(self.walk_forward)} windows above PF "
+            f"{WF_MIN_WINDOW_PF} [{pfs}]"
+        )
+
+    @property
+    def gate_monte_carlo(self) -> tuple[bool, str]:
+        if self.monte_carlo_positive is None:
+            return False, "too few trades to resample (fewer than 10)"
+        return self.monte_carlo_positive >= MC_MIN_PROFITABLE, (
+            f"{self.monte_carlo_positive:.1%} of {self.monte_carlo_simulations} "
+            f"simulations profitable (need >={MC_MIN_PROFITABLE:.0%})"
+        )
+
+    @property
+    def gate_drawdown(self) -> tuple[bool, str]:
+        segments = [s for s in (self.in_sample, self.out_of_sample) if s and s.ok]
+        if not segments:
+            return False, "no segment produced a drawdown figure"
+        worst = max(s.metrics.max_drawdown for s in segments)
+        return worst < MAX_DRAWDOWN, (
+            f"worst segment drawdown {worst:.2%} (need <{MAX_DRAWDOWN:.0%})"
+        )
+
+    @property
+    def gate_sharpe_retention(self) -> tuple[bool, str]:
+        """OOS Sharpe must retain 80% of in-sample Sharpe.
+
+        A strategy that decays this far out of sample is disabled, not tuned:
+        tuning it against the same out-of-sample window is how that window
+        stops being out of sample.
+        """
+        if not (self.in_sample and self.in_sample.ok and self.out_of_sample and self.out_of_sample.ok):
+            return False, "need both segments"
+        is_sharpe = self.in_sample.metrics.sharpe
+        oos_sharpe = self.out_of_sample.metrics.sharpe
+        if is_sharpe <= 0:
+            return False, f"in-sample Sharpe {is_sharpe:.2f} is not positive"
+        retention = oos_sharpe / is_sharpe
+        return retention >= MIN_SHARPE_RETENTION, (
+            f"OOS Sharpe {oos_sharpe:.2f} is {retention:.0%} of in-sample "
+            f"{is_sharpe:.2f} (need >={MIN_SHARPE_RETENTION:.0%})"
+        )
+
+    @property
+    def gates(self) -> dict[str, tuple[bool, str]]:
+        return {
+            "OOS PF > 1.3 and Sharpe > 0.7": self.gate_oos,
+            f"walk-forward: {WF_FOLDS} folds, each PF > {WF_MIN_WINDOW_PF}": self.gate_walk_forward,
+            f"Monte Carlo: >={MC_MIN_PROFITABLE:.0%} profitable": self.gate_monte_carlo,
+            f"max drawdown < {MAX_DRAWDOWN:.0%}": self.gate_drawdown,
+            f"OOS Sharpe >= {MIN_SHARPE_RETENTION:.0%} of IS": self.gate_sharpe_retention,
+        }
+
+    @property
+    def passes_gate(self) -> bool:
+        """Every gate, not just the headline one."""
+        return all(ok for ok, _ in self.gates.values())
 
 
 def _split(candles: Sequence[Candle], fraction: float) -> tuple[list[Candle], list[Candle]]:
@@ -221,35 +326,63 @@ def validate_asset_class(
         timeframe=timeframe, periods_per_year=periods_per_year,
     )
 
-    # -- walk-forward ------------------------------------------------------
-    longest = len(benchmark)
-    window = longest // max(1, walk_forward_windows + 1)
-    if window > warmup + 60:
-        for index in range(walk_forward_windows):
-            start = index * window
-            end = start + window * 2
-            slice_universe = {
-                inst: candles[start:end]
-                for inst, candles in universe.items()
-                if len(candles[start:end]) > warmup + 30
-            }
-            if not slice_universe:
-                continue
-            segment = _run_segment(
-                f"wf_{index}", slice_universe, benchmark[start:end], warmup=warmup,
-                equity=equity, timeframe=timeframe, periods_per_year=periods_per_year,
-            )
-            if segment.ok:
-                report.walk_forward.append(segment.metrics)
+    # -- walk-forward: rolling train/test folds ----------------------------
+    #
+    # Each fold scores only its *test* window. The train window is passed to
+    # the backtester as its warm-up, so no decision is ever made on a bar the
+    # fold has already been scored on, and successive test windows do not
+    # overlap. Folds are anchored to the end of history: when there is not room
+    # for all of them the earliest are dropped, because a deployment decision
+    # is about recent regimes.
+    train_bars, test_bars = WF_GEOMETRY[label]
+    folds = plan_walk_forward_folds(
+        len(benchmark),
+        train_bars=train_bars,
+        test_bars=test_bars,
+        folds=walk_forward_windows,
+        min_train_bars=warmup,
+    )
+    report.folds = list(folds)
+    if not folds:
+        report.fold_note = (
+            f"{len(benchmark)} bars is too few for {walk_forward_windows} folds of "
+            f"{max(train_bars, warmup)} train + {test_bars} test"
+        )
+    for fold in folds:
+        slice_universe = {
+            inst: candles[fold.train_start:fold.test_end]
+            for inst, candles in universe.items()
+            if len(candles[fold.train_start:fold.test_end]) > fold.train_bars
+        }
+        if not slice_universe:
+            continue
+        segment = _run_segment(
+            f"wf_{fold.index}",
+            slice_universe,
+            benchmark[fold.train_start:fold.test_end],
+            warmup=fold.train_bars,
+            equity=equity,
+            timeframe=timeframe,
+            periods_per_year=periods_per_year,
+        )
+        if segment.ok:
+            report.walk_forward.append(segment.metrics)
 
     # -- Monte Carlo on the combined trade set -----------------------------
     trades: list[TradeRecord] = []
     for segment in (report.in_sample, report.out_of_sample):
         if segment and segment.ok:
             trades.extend(segment.result.trades)
-    simulation = monte_carlo(trades, starting_equity=equity)
+            report.signals_generated += segment.result.signals_generated
+            report.signals_rejected += segment.result.signals_rejected
+            for rule, count in segment.result.rejection_reasons.items():
+                report.rejection_reasons[rule] = report.rejection_reasons.get(rule, 0) + count
+    simulation = monte_carlo(
+        trades, starting_equity=equity, simulations=MC_SIMULATIONS
+    )
     if simulation is not None:
         report.monte_carlo_positive = simulation.positive_fraction
+        report.monte_carlo_simulations = simulation.simulations
 
     # -- per-strategy breakdown -------------------------------------------
     by_strategy: dict[str, list[TradeRecord]] = {}
@@ -315,15 +448,18 @@ def print_report(report: AssetClassReport) -> None:
               f"{_fmt(m.profit_factor):>15}{m.sharpe:9.2f}{m.max_drawdown:9.1%}{m.return_pct:9.1%}")
 
     if report.walk_forward:
-        profitable = sum(1 for m in report.walk_forward if m.total_pnl > 0)
-        print(f"\n  walk-forward: {profitable}/{len(report.walk_forward)} windows profitable; "
-              f"mean PF {_fmt(statistics.fmean([m.profit_factor for m in report.walk_forward if m.profit_factor != float('inf')] or [0.0]))}")
+        print(f"\n  {'fold':10}{'bars tested':>13}{'trades':>8}{'win rate':>10}{'PF':>8}{'sharpe':>9}")
+        for fold, m in zip(report.folds, report.walk_forward):
+            print(f"  wf_{fold.index:<7}{fold.test_bars:13}{m.trade_count:8}{m.win_rate:10.1%}"
+                  f"{_fmt(m.profit_factor):>8}{m.sharpe:9.2f}")
     else:
-        print("\n  walk-forward: not enough history for multiple windows")
+        print(f"\n  walk-forward: no folds ran ({report.fold_note or 'unknown reason'})")
 
-    if report.monte_carlo_positive is not None:
-        print(f"  monte carlo (bootstrap): {report.monte_carlo_positive:.1%} of resamples profitable "
-              f"(need >= 95%)")
+    if report.signals_generated:
+        print(f"\n  signals generated {report.signals_generated}, "
+              f"rejected by risk {report.signals_rejected}")
+        for rule, count in sorted(report.rejection_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"      {rule:44}{count:6}")
 
     if report.strategy_breakdown:
         print(f"\n  {'strategy':16}{'trades':>8}{'win rate':>10}{'PF':>8}{'avg R':>8}")
@@ -331,13 +467,118 @@ def print_report(report: AssetClassReport) -> None:
             print(f"  {strategy_id:16}{int(stats['trades']):8}{stats['win_rate']:10.1%}"
                   f"{_fmt(stats['profit_factor']):>8}{stats['avg_r']:8.2f}")
 
-    gate = "PASS" if report.passes_gate else "FAIL"
-    oos = report.out_of_sample.metrics if report.out_of_sample and report.out_of_sample.ok else None
-    detail = ""
-    if oos:
-        detail = (f"  (OOS PF {_fmt(oos.profit_factor)} vs >{OOS_MIN_PROFIT_FACTOR}, "
-                  f"Sharpe {oos.sharpe:.2f} vs >{OOS_MIN_SHARPE}, {oos.trade_count} trades)")
-    print(f"\n  OOS DEPLOYMENT GATE: {gate}{detail}\n")
+    print(f"\n  {'DEPLOYMENT GATES':56}{'verdict':>8}")
+    for label, (ok, detail) in report.gates.items():
+        print(f"  {label:56}{'PASS' if ok else 'FAIL':>8}")
+        print(f"      {detail}")
+    print(f"\n  OVERALL: {'PASS' if report.passes_gate else 'FAIL'}\n")
+
+
+def write_markdown_report(report: AssetClassReport, path: Path) -> None:
+    """Write one asset class's result as a standalone markdown report."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    name = report.asset_class.value.upper()
+    lines: list[str] = [f"# {name} validation", ""]
+
+    if report.skipped:
+        lines += [f"**Skipped:** {report.skipped}", ""]
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return
+
+    lines += [
+        f"Bar interval **{report.timeframe}**, Sharpe annualised at "
+        f"{report.periods_per_year}/yr. Chronological 70/30 split; no decision is "
+        f"ever made on a bar that has already been scored.",
+        "",
+        "## Data",
+        "",
+        "| symbol | bars | span | quality |",
+        "|---|---|---|---|",
+    ]
+    for symbol, summary in sorted(report.loaded.items()):
+        # "SYM: 2500 bars 2017-01-30 to 2026-08-28, quality 1.00 (OK)"
+        body = summary.split(": ", 1)[1] if ": " in summary else summary
+        bars = body.split(" bars")[0]
+        span = body.split(" bars ")[1].split(", quality")[0] if " bars " in body else ""
+        quality = body.split("quality ", 1)[1] if "quality " in body else ""
+        lines.append(f"| {symbol} | {bars} | {span} | {quality} |")
+
+    if report.volatility_profile:
+        lines += ["", "Realised volatility (annualised): " + ", ".join(
+            f"{s} {v:.0%}" for s, v in sorted(report.volatility_profile.items())
+        )]
+
+    lines += [
+        "",
+        "## Segments",
+        "",
+        "| segment | trades | win rate | profit factor | Sharpe | max DD | return |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for segment in (report.in_sample, report.out_of_sample):
+        if segment is None:
+            continue
+        if not segment.ok:
+            lines.append(f"| {segment.name} | ERROR | {segment.error} | | | | |")
+            continue
+        m = segment.metrics
+        lines.append(
+            f"| {segment.name} | {m.trade_count} | {m.win_rate:.1%} | "
+            f"{_fmt(m.profit_factor)} | {m.sharpe:.2f} | {m.max_drawdown:.2%} | "
+            f"{m.return_pct:.2%} |"
+        )
+
+    if report.walk_forward:
+        lines += [
+            "",
+            "## Walk-forward",
+            "",
+            "Rolling folds, anchored to the end of history. Each fold's train window "
+            "is the backtester's warm-up, so only the test window is scored and test "
+            "windows never overlap.",
+            "",
+            "| fold | train bars | test bars | trades | win rate | PF | Sharpe |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for fold, m in zip(report.folds, report.walk_forward):
+            lines.append(
+                f"| wf_{fold.index} | {fold.train_bars} | {fold.test_bars} | "
+                f"{m.trade_count} | {m.win_rate:.1%} | {_fmt(m.profit_factor)} | "
+                f"{m.sharpe:.2f} |"
+            )
+    else:
+        lines += ["", "## Walk-forward", "",
+                  f"No folds ran: {report.fold_note or 'unknown reason'}."]
+
+    if report.signals_generated:
+        lines += [
+            "", "## Where signals went", "",
+            f"{report.signals_generated} signals generated, "
+            f"{report.signals_rejected} rejected by the risk engine.",
+        ]
+        if report.rejection_reasons:
+            lines += ["", "| rejection rule | count |", "|---|---|"]
+            for rule, count in sorted(report.rejection_reasons.items(), key=lambda kv: -kv[1]):
+                lines.append(f"| `{rule}` | {count} |")
+
+    if report.strategy_breakdown:
+        lines += [
+            "", "## Per strategy", "",
+            "| strategy | trades | win rate | PF | avg R |",
+            "|---|---|---|---|---|",
+        ]
+        for strategy_id, stats in report.strategy_breakdown.items():
+            lines.append(
+                f"| {strategy_id} | {int(stats['trades'])} | {stats['win_rate']:.1%} | "
+                f"{_fmt(stats['profit_factor'])} | {stats['avg_r']:.2f} |"
+            )
+
+    lines += ["", "## Deployment gates", "", "| gate | verdict | detail |", "|---|---|---|"]
+    for label, (ok, detail) in report.gates.items():
+        lines.append(f"| {label} | {'PASS' if ok else '**FAIL**'} | {detail} |")
+    lines += ["", f"**Overall: {'PASS' if report.passes_gate else 'FAIL'}**", ""]
+
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
@@ -347,8 +588,13 @@ def main() -> int:
     parser.add_argument("--equity", type=float, default=100_000.0)
     parser.add_argument("--warmup", type=int, default=300)
     parser.add_argument("--in-sample", type=float, default=0.70, dest="in_sample")
-    parser.add_argument("--wf-windows", type=int, default=3, dest="wf_windows")
+    parser.add_argument("--wf-windows", type=int, default=WF_FOLDS, dest="wf_windows")
     parser.add_argument("--json", action="store_true", help="emit machine-readable summary")
+    parser.add_argument(
+        "--report-dir",
+        default="validation",
+        help="write one markdown report per asset class here (empty to skip)",
+    )
     args = parser.parse_args()
 
     root = Path(args.data_dir)
@@ -371,6 +617,10 @@ def main() -> int:
         )
         reports.append(report)
         print_report(report)
+        if args.report_dir:
+            destination = Path(args.report_dir) / f"{label}_report.md"
+            write_markdown_report(report, destination)
+            print(f"  written: {destination}\n")
 
     print("=" * 78)
     print("  SUMMARY")

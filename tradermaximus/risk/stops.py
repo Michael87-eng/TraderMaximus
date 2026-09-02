@@ -74,10 +74,23 @@ _BOUNDARY_TOLERANCE = 1e-9
 
 
 #: Section 10.2: ATR multiplier by volatility regime.
+#: ATR multipliers by volatility percentile.
+#:
+#: Widened from 1.2/1.5/1.8 to 1.5/1.75/2.0 under the Phase 5 brief ("1.5x ATR
+#: for low volatility, 2.0x ATR for high volatility"). The intent is that a
+#: volatile market gets more room before the stop is hit, rather than being
+#: stopped out by noise the strategy expected.
+#:
+#: This does not loosen risk. The stop *distance* only ever widens; the risk
+#: budget per trade is unchanged, so the sizer takes a proportionally smaller
+#: position and the money at risk stays capped at the section 8.1 limit. The
+#: section 8.1 max_stop_pct ceiling (7% equities, 5% crypto and FX) still
+#: clamps the result, and a structure distance beyond that ceiling still
+#: rejects the trade outright.
 ATR_MULTIPLIERS: dict[str, float] = {
-    "low": 1.2,
-    "moderate": 1.5,
-    "high": 1.8,
+    "low": 1.5,
+    "moderate": 1.75,
+    "high": 2.0,
 }
 
 

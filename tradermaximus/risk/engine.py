@@ -29,7 +29,11 @@ from ..portfolio.book import PortfolioSnapshot, PositionBook
 from .circuit_breakers import CircuitBreakerEngine
 from .kill_switch import KillSwitch
 from .limits import HardLimits, limits_for
-from .portfolio import PortfolioRiskEngine, PortfolioRiskMetrics
+from .portfolio import (
+    PortfolioRiskEngine,
+    PortfolioRiskMetrics,
+    correlation_size_multiplier,
+)
 from .sizing import PositionSizingEngine, SizingDecision
 from .stops import StopDecision, StopLossEngine
 
@@ -264,6 +268,23 @@ class RiskEngine:
         if any(p.symbol == signal.symbol for p in context.snapshot.positions):
             return reject(Rule.DUPLICATE_POSITION, f"a position in {signal.symbol} is already open")
 
+        # Phase 6: each asset class holds its own seat count, so one class
+        # cannot fill the whole book. A portfolio-wide cap alone is satisfied
+        # just as well by ten correlated crypto positions as by a spread book.
+        checks.append(Rule.POSITION_COUNT)
+        asset_limits_for_signal = limits_for(instrument.asset_class)
+        open_in_class = sum(
+            1
+            for p in context.snapshot.positions
+            if p.asset_class is instrument.asset_class
+        )
+        if open_in_class >= asset_limits_for_signal.max_positions:
+            return reject(
+                Rule.POSITION_COUNT,
+                f"{open_in_class} {instrument.asset_class.value} positions already open, "
+                f"limit {asset_limits_for_signal.max_positions}",
+            )
+
         checks.append(Rule.POSITION_COUNT)
         counts = context.snapshot.count_by_asset_class()
         if context.snapshot.position_count >= self.limits.max_positions_total:
@@ -295,6 +316,18 @@ class RiskEngine:
 
         # ---- 7. sizing -----------------------------------------------------
         checks.append(Rule.SIZING_REJECTED)
+        # Phase 3: a candidate that moves with something already held is not a
+        # second bet, it is the first bet at a larger size. The per-trade risk
+        # cap cannot see that, because it looks at each trade in isolation.
+        held_returns = {
+            symbol: returns
+            for symbol, returns in context.returns_by_symbol.items()
+            if symbol != signal.symbol
+            and any(p.symbol == symbol for p in context.snapshot.positions)
+        }
+        correlation_multiplier, worst_correlation = correlation_size_multiplier(
+            context.returns_by_symbol.get(signal.symbol, ()), held_returns
+        )
         sizing = self.sizer.size(
             instrument=instrument,
             equity=context.equity,
@@ -303,8 +336,15 @@ class RiskEngine:
             volatility=context.volatility,
             average_daily_volume=context.average_daily_volume,
             available_cash=context.available_cash,
-            regime_multiplier=context.regime_multiplier,
+            regime_multiplier=context.regime_multiplier * correlation_multiplier,
         )
+        if correlation_multiplier < 1.0 and worst_correlation is not None:
+            self.journal.trade_decision(
+                signal.symbol,
+                "SIZE_REDUCED",
+                f"correlated {worst_correlation:.2f} with an open position; "
+                f"size cut to {correlation_multiplier:.0%}",
+            )
         if not sizing.approved:
             return reject(Rule.SIZING_REJECTED, sizing.reason, stop=stop, sizing=sizing)
 

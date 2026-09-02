@@ -29,7 +29,10 @@ sys.path.insert(0, ".")
 
 from tools.market_sim import CHARACTERS, make
 
+from pathlib import Path
+
 from tradermaximus.core.types import AssetClass, Instrument, Timeframe
+from tradermaximus.data.csv_loader import load_directory
 from tradermaximus.data.series import CandleSeries
 from tradermaximus.indicators.engine import FeatureEngine
 from tradermaximus.regime.engine import (
@@ -76,6 +79,41 @@ class Funnel:
         return "\n".join(lines)
 
 
+#: Bar interval per asset-class directory, matching validate_real_data.py.
+REAL_TIMEFRAMES = {
+    "equities": Timeframe.W1,
+    "crypto": Timeframe.D1,
+    "forex": Timeframe.D1,
+}
+
+REAL_ASSET_CLASSES = {
+    "equities": AssetClass.EQUITIES,
+    "crypto": AssetClass.CRYPTO,
+    "forex": AssetClass.FOREX,
+}
+
+
+def real_series(label: str, root: Path, *, warmup: int) -> list[tuple[CandleSeries, CandleSeries]]:
+    """Load real history as (symbol series, benchmark series) pairs.
+
+    The benchmark is the longest series in the directory, which is what the
+    validation harness uses, so the regime the autopsy sees is the regime the
+    backtest saw.
+    """
+    directory = root / label
+    loaded = load_directory(
+        directory,
+        timeframe=REAL_TIMEFRAMES[label],
+        asset_class=REAL_ASSET_CLASSES[label],
+        min_history=warmup,
+    )
+    usable = [load.series for load in loaded.values() if load.usable]
+    if not usable:
+        return []
+    benchmark = max(usable, key=len)
+    return [(series, benchmark) for series in usable]
+
+
 def run_funnel(
     spec: StrategySpec,
     *,
@@ -84,6 +122,7 @@ def run_funnel(
     seeds: Sequence[int] = (1, 2, 3, 4),
     characters: Sequence[str] = CHARACTERS,
     score_gate: bool = True,
+    series: Sequence[tuple[CandleSeries, CandleSeries]] | None = None,
 ) -> Funnel:
     engine = FeatureEngine()
     regime_engine = RegimeEngine()
@@ -98,12 +137,21 @@ def run_funnel(
     killed = [0] * len(names)
     entering = [0] * len(names)
 
-    for character in characters:
-        for seed in seeds:
-            candles = make(character, bars + warmup, seed)
-            benchmark = make("benchmark", bars + warmup, seed + 500)
-            full = CandleSeries.build(instrument, Timeframe.D1, candles)
-            bench = CandleSeries.build(instrument, Timeframe.D1, benchmark)
+    if series is None:
+        series = [
+            (
+                CandleSeries.build(instrument, Timeframe.D1, make(character, bars + warmup, seed)),
+                CandleSeries.build(
+                    instrument, Timeframe.D1, make("benchmark", bars + warmup, seed + 500)
+                ),
+            )
+            for character in characters
+            for seed in seeds
+        ]
+
+    if True:
+        for full, bench in series:
+            instrument = full.instrument
 
             for index in range(warmup, len(full)):
                 when = full.timestamps[index]
@@ -185,14 +233,33 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Sequential gate autopsy")
     parser.add_argument("--bars", type=int, default=640)
     parser.add_argument("--strategy", default=None, help="limit to one strategy id")
+    parser.add_argument(
+        "--real",
+        choices=sorted(REAL_TIMEFRAMES),
+        help="run against real market history in data/real/<class> instead of the generator",
+    )
+    parser.add_argument("--data-dir", default="data/real")
+    parser.add_argument("--warmup", type=int, default=300)
     args = parser.parse_args()
 
+    real = None
+    if args.real:
+        real = real_series(args.real, Path(args.data_dir), warmup=args.warmup)
+        if not real:
+            print(f"no usable series in {args.data_dir}/{args.real}")
+            return 1
+        asset_class = REAL_ASSET_CLASSES[args.real]
+        print(f"real data: {args.real} — {len(real)} symbols, "
+              f"{sum(len(f) for f, _ in real):,} bars total\n")
+    else:
+        asset_class = AssetClass.EQUITIES
+
     specs = [STRATEGIES_BY_ID[args.strategy]] if args.strategy else list(ALL_STRATEGIES)
-    specs = [s for s in specs if AssetClass.EQUITIES in s.asset_classes]
+    specs = [s for s in specs if asset_class in s.asset_classes]
 
     summary: list[tuple[str, int, int, str]] = []
     for spec in specs:
-        funnel = run_funnel(spec, bars=args.bars)
+        funnel = run_funnel(spec, bars=args.bars, warmup=args.warmup, series=real)
         print("=" * 74)
         print(f"{spec.id}  {spec.name}")
         print("=" * 74)

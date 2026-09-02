@@ -58,6 +58,18 @@ class AcceptanceCriteria:
     min_profit_factor_oos: float = 1.3
     min_oos_sharpe_ratio: float = 0.80      # OOS Sharpe as a fraction of in-sample
     max_drawdown_multiple: float = 1.5      # vs the Monte Carlo expectation
+
+    # -- hardened walk-forward and Monte Carlo gates ------------------------
+    #: Every rolling test window must clear this profit factor on its own.
+    #: A mean across windows hides a single window carrying four losers.
+    min_walk_forward_window_pf: float = 1.3
+    #: Folds required before a walk-forward verdict means anything.
+    required_walk_forward_folds: int = 5
+    #: Bootstrap simulations, and the fraction of them that must be profitable.
+    monte_carlo_simulations: int = 5_000
+    min_monte_carlo_profitable: float = 0.90
+    #: Absolute portfolio drawdown ceiling for deployment.
+    max_drawdown: float = 0.05
     min_win_rate: float = 0.40
     min_win_loss_ratio: float = 2.5         # alternative to the win-rate floor
     min_trades_is: int = 100
@@ -257,6 +269,77 @@ class WalkForwardResult:
             "consistency": round(self.consistency, 4),
             "mean_sharpe_retention": round(self.mean_retention, 4),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class Fold:
+    """One rolling train/test fold, as bar indices into the full history.
+
+    ``train`` is never scored. In a rule-based system there are no parameters
+    fitted on it, so it serves only as the history the indicators need before
+    the first decision in ``test`` can be made — which is exactly the role the
+    warm-up plays in the in-sample/out-of-sample split.
+    """
+
+    index: int
+    train_start: int
+    train_end: int
+    test_end: int
+
+    @property
+    def test_start(self) -> int:
+        return self.train_end
+
+    @property
+    def train_bars(self) -> int:
+        return self.train_end - self.train_start
+
+    @property
+    def test_bars(self) -> int:
+        return self.test_end - self.train_end
+
+
+def plan_walk_forward_folds(
+    total_bars: int,
+    *,
+    train_bars: int,
+    test_bars: int,
+    folds: int,
+    min_train_bars: int = 0,
+) -> tuple[Fold, ...]:
+    """Lay out ``folds`` rolling train/test folds, newest-fitting-first.
+
+    Test windows never overlap, so no bar is scored twice and the folds
+    together cover a contiguous, strictly out-of-sample stretch of history.
+
+    The plan is anchored to the *end* of the history: if there is not room for
+    every requested fold, the earliest ones are dropped rather than the latest,
+    because recent regimes are the ones a deployment decision is about.
+
+    ``min_train_bars`` raises the training window when the indicator set needs
+    more history than the requested train period contains — an MA200 on weekly
+    bars needs 200 weeks whatever "three years" says. Returns an empty tuple
+    when not even one fold fits.
+    """
+    if train_bars <= 0 or test_bars <= 0 or folds <= 0:
+        return ()
+    train_bars = max(train_bars, min_train_bars)
+
+    # Anchor on the end and walk backwards in whole test windows.
+    plan: list[Fold] = []
+    test_end = total_bars
+    for _ in range(folds):
+        train_end = test_end - test_bars
+        train_start = train_end - train_bars
+        if train_start < 0:
+            break
+        plan.append(Fold(0, train_start, train_end, test_end))
+        test_end -= test_bars
+
+    plan.reverse()
+    return tuple(
+        Fold(i, f.train_start, f.train_end, f.test_end) for i, f in enumerate(plan)
+    )
 
 
 def walk_forward(

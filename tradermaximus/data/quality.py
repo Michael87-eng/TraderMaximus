@@ -307,11 +307,21 @@ class DataQualityEngine:
         * an unadjusted split, recognisable by its ratio;
         * a bad tick, recognisable because the next bar undoes it;
         * a genuine crash, which persists and must be kept.
+
+        The split heuristic applies to equities only. Crypto and FX have no
+        corporate actions to be unadjusted for, so on those classes a move that
+        happens to land near 1:2 is *always* a real one. Applying it anyway
+        rejected SOL-USD outright on its -48.5% bar of 2022-11-08, which is the
+        FTX collapse — the single most informative day in that series.
         """
         findings: list[QualityFinding] = []
         closes = series.closes
         if len(closes) < 20:
             return findings
+
+        corporate_actions_possible = (
+            series.instrument.asset_class is AssetClass.EQUITIES
+        )
 
         moves = [(b - a) / a for a, b in zip(closes, closes[1:]) if a > 0]
         if not moves:
@@ -323,7 +333,8 @@ class DataQualityEngine:
 
         for index, move in enumerate(moves):
             if (
-                not prices_adjusted
+                corporate_actions_possible
+                and not prices_adjusted
                 and abs(move) >= self.corporate_action_jump
                 and _looks_like_ratio(move)
             ):

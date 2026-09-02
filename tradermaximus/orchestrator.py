@@ -41,6 +41,7 @@ from .regime.engine import (
     minimum_score,
 )
 from .risk.circuit_breakers import CircuitBreakerEngine
+from .research.drift import StrategyMonitor
 from .risk.engine import RiskContext, RiskEngine, RiskVerdict
 from .risk.kill_switch import KillSwitch, KillTrigger, SystemSignals
 from .risk.limits import HardLimits
@@ -127,6 +128,7 @@ class TraderMaximus:
         fundamentals: Mapping[str, Fundamentals] | None = None,
         benchmark: Instrument | None = None,
         paper_mode: bool = True,
+        monitor: StrategyMonitor | None = None,
     ) -> None:
         self.config = config if config is not None else SystemConfig.defaults()
         self.limits = HardLimits.from_config(self.config)
@@ -147,7 +149,15 @@ class TraderMaximus:
         )
         self.features = FeatureEngine()
         self.regime_engine = RegimeEngine()
-        self.strategies = StrategyEngine(journal=journal)
+        # The drift monitor gates strategy selection: a strategy it has
+        # disabled is skipped entirely, not merely sized down. Section 21.2's
+        # response to severe decay is to stop trading the strategy, and a
+        # smaller position in a strategy whose edge has gone is still a
+        # position in a strategy whose edge has gone.
+        self.monitor = monitor if monitor is not None else StrategyMonitor()
+        self.strategies = StrategyEngine(
+            journal=journal, is_enabled=self.monitor.is_enabled
+        )
         self.kill_switch = KillSwitch(journal=journal)
         self.breakers = CircuitBreakerEngine(
             max_daily_loss=self.limits.max_daily_loss,

@@ -191,11 +191,20 @@ class TestStopDistance(unittest.TestCase):
         self.assertIs(decision.rejection, StopRejection.INVALID_ENTRY)
 
     def test_atr_multiplier_scales_with_volatility(self) -> None:
-        self.assertEqual(atr_multiplier_for(0.10), 1.2)
-        self.assertEqual(atr_multiplier_for(0.50), 1.5)
-        self.assertEqual(atr_multiplier_for(0.90), 1.8)
+        """Phase 5 geometry: 1.5x when quiet, 2.0x when volatile.
+
+        A wider stop is not more risk. The risk budget per trade is fixed, so
+        a wider stop buys a smaller position; what changes is how much noise
+        the trade can absorb before it is closed.
+        """
+        self.assertEqual(atr_multiplier_for(0.10), 1.5)
+        self.assertEqual(atr_multiplier_for(0.50), 1.75)
+        self.assertEqual(atr_multiplier_for(0.90), 2.0)
         # Unknown volatility uses the moderate multiplier, not an extreme.
-        self.assertEqual(atr_multiplier_for(None), 1.5)
+        self.assertEqual(atr_multiplier_for(None), 1.75)
+        # Monotonic: more volatility never buys a tighter stop.
+        multipliers = [atr_multiplier_for(p) for p in (0.10, 0.50, 0.90)]
+        self.assertEqual(multipliers, sorted(multipliers))
 
 
 class TestCorrelation(unittest.TestCase):

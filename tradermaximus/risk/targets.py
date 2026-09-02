@@ -99,6 +99,36 @@ LADDERS: Mapping[str, TargetLadder] = {
     ),
 }
 
+#: The Phase 5 scale-out ladder: 50% at +5%, 30% at +10%, trail the last 20%
+#: with 2x ATR.
+#:
+#: Expressed in raw percentage of entry price, which is what was specified.
+#: Note what that means per asset class, because it is not neutral: EURUSD's
+#: realised volatility is about 4% annualised, so a 5% move is roughly a year
+#: of travel and this ladder's first rung is effectively unreachable on FX
+#: inside a five-day holding limit. On crypto, where daily moves of 5% are
+#: routine, the same rung fires almost immediately. A percentage ladder is an
+#: implicit bet on the asset's volatility; ATR_SCALE_OUT below states the same
+#: shape in units that travel with the market.
+SCALE_OUT = TargetLadder(
+    targets=(
+        ProfitTarget(0.05, 0.50, "TP1"),
+        ProfitTarget(0.10, 0.30, "TP2"),
+    ),
+    hold_rule="trail final 20% with ATR x 2",
+)
+
+#: The same 50/30/20 shape denominated in ATR multiples rather than percent, so
+#: one rung means the same thing on EURUSD as on SOL-USD. ``gain_pct`` here is
+#: filled in per trade by :meth:`TakeProfitEngine.ladder_for` from the
+#: instrument's own ATR; the constants are the multiples.
+ATR_SCALE_OUT_MULTIPLES: tuple[tuple[float, float, str], ...] = (
+    (1.5, 0.50, "TP1"),
+    (3.0, 0.30, "TP2"),
+)
+
+LADDERS = dict(LADDERS) | {"scale_out": SCALE_OUT}
+
 DEFAULT_LADDER = LADDERS["momentum"]
 
 
@@ -107,6 +137,25 @@ class TakeProfitEngine:
 
     def __init__(self, *, regime_adjustment: bool = True) -> None:
         self.regime_adjustment = regime_adjustment
+
+    @staticmethod
+    def atr_scale_out(atr: float, entry_price: float) -> TargetLadder:
+        """The 50/30/20 scale-out ladder in ATR multiples, not raw percent.
+
+        One ATR is what the instrument actually moves in a bar, so a rung set
+        at 1.5 ATR is the same distance in opportunity terms on EURUSD as on
+        SOL-USD. The percentage form of the same ladder is not: on a 4%-vol
+        currency pair a +5% rung is a year away, and on crypto it is a Tuesday.
+        """
+        if atr <= 0 or entry_price <= 0:
+            return SCALE_OUT
+        return TargetLadder(
+            targets=tuple(
+                ProfitTarget(multiple * atr / entry_price, fraction, label)
+                for multiple, fraction, label in ATR_SCALE_OUT_MULTIPLES
+            ),
+            hold_rule="trail final 20% with ATR x 2",
+        )
 
     def ladder_for(
         self,
