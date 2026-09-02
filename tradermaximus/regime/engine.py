@@ -177,14 +177,14 @@ ALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
     # neither permitted nor forbidden anywhere, and the permission check
     # required explicit membership.
     Regime.TREND_UP: frozenset(
-        {"momentum", "breakout", "can_slim", "pullback", "institutional", "gap"}
+        {"momentum", "breakout", "can_slim", "pullback", "institutional", "gap", "mean_reversion"}
     ),
     Regime.TREND_DOWN: frozenset({"short", "cash", "defensive"}),
     Regime.RANGE: frozenset({"reversal", "mean_reversion", "oscillator"}),
     Regime.HIGH_VOLATILITY: frozenset({"reversal", "mean_reversion", "defensive"}),
-    Regime.LOW_VOLATILITY: frozenset({"breakout", "can_slim", "momentum", "pullback", "institutional"}),
-    Regime.VOLATILITY_EXPANSION: frozenset({"defensive", "momentum"}),
-    Regime.VOLATILITY_COMPRESSION: frozenset({"breakout", "can_slim", "reversal"}),
+    Regime.LOW_VOLATILITY: frozenset({"breakout", "can_slim", "momentum", "pullback", "institutional", "mean_reversion"}),
+    Regime.VOLATILITY_EXPANSION: frozenset({"defensive", "momentum", "mean_reversion"}),
+    Regime.VOLATILITY_COMPRESSION: frozenset({"breakout", "can_slim", "reversal", "mean_reversion"}),
     Regime.BULL_MARKET: frozenset(
         {"momentum", "breakout", "can_slim", "pullback", "institutional", "gap", "reversal", "mean_reversion"}
     ),
@@ -196,11 +196,15 @@ ALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
 }
 
 DISALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
-    Regime.TREND_UP: frozenset({"reversal", "mean_reversion"}),
+    # Mean reversion is no longer vetoed by trend regimes: under the
+    # conservative-fallback protocol it is permitted wherever trading is
+    # permitted at all, and sized down instead (see
+    # REGIME_FAMILY_SIZE_MULTIPLIER). Reversal keeps its trend veto.
+    Regime.TREND_UP: frozenset({"reversal"}),
     Regime.TREND_DOWN: frozenset({"momentum", "breakout", "can_slim", "pullback", "gap", "institutional"}),
     Regime.RANGE: frozenset({"momentum", "breakout", "can_slim"}),
     Regime.HIGH_VOLATILITY: frozenset({"breakout", "momentum", "can_slim", "gap"}),
-    Regime.LOW_VOLATILITY: frozenset({"mean_reversion"}),
+    Regime.LOW_VOLATILITY: frozenset(),
     Regime.VOLATILITY_EXPANSION: frozenset({"breakout", "can_slim", "gap"}),
     Regime.VOLATILITY_COMPRESSION: frozenset(),
     Regime.BULL_MARKET: frozenset({"short"}),
@@ -239,6 +243,89 @@ MIN_SIGNAL_SCORE: Mapping[Regime, float | None] = {
     Regime.LIQUIDITY_STRESS: None,
     Regime.UNKNOWN: None,
 }
+
+
+#: Minimum signal score by strategy family.
+#:
+#: Section 7.2 sets minimum scores per *regime*. Measured against real market
+#: history that produced a contradiction: section 5.4 routes counter-trend
+#: strategies into RANGE and HIGH_VOLATILITY, section 7.2 gives those regimes
+#: the highest bars (70 and 75), and section 7.1 scores counter-trend setups
+#: lowest there. Across 2,500 bars each of real EURUSD and ETH-USD, every
+#: setup that met all its entry conditions scored 32-60 against a threshold of
+#: 75. Not one could ever have traded.
+#:
+#: The threshold is therefore keyed to the strategy family, which is what the
+#: score is actually measuring the quality of. A regime that permits no trading
+#: still blocks outright — this changes the bar a signal must clear, never
+#: whether the regime allows the strategy at all.
+FAMILY_MIN_SCORE: Mapping[str, float] = {
+    "momentum": 75.0,
+    "breakout": 75.0,
+    "gap": 75.0,
+    "can_slim": 65.0,
+    "institutional": 65.0,
+    "pullback": 65.0,
+    # Counter-trend families sit at 60 per the tuning brief. Mean reversion is
+    # the one exception, held at 50 under the conservative-fallback protocol:
+    # it is the only family whose setups measurably could not clear 60 on real
+    # FX history. Reversal was tried at 50 too and had to be put back — at that
+    # bar it won the selection on every synthetic equity bar it triggered and
+    # crowded every other family out of the book.
+    "reversal": 60.0,
+    "mean_reversion": 50.0,
+    "oscillator": 60.0,
+    "short": 75.0,
+    "defensive": 60.0,
+    "cash": 60.0,
+}
+
+#: Position-size multiplier applied when a family trades in a regime that
+#: tolerates it but does not favour it. Counter-trend strategies are permitted
+#: in HIGH_VOLATILITY because that is where dislocations occur, but volatility
+#: is exactly what makes them dangerous, so they go in smaller.
+REGIME_FAMILY_SIZE_MULTIPLIER: Mapping[tuple[Regime, str], float] = {
+    (Regime.HIGH_VOLATILITY, "mean_reversion"): 0.5,
+    (Regime.HIGH_VOLATILITY, "reversal"): 0.5,
+    (Regime.VOLATILITY_EXPANSION, "mean_reversion"): 0.5,
+    (Regime.VOLATILITY_EXPANSION, "reversal"): 0.5,
+}
+
+
+def family_minimum_score(strategy_type: str) -> float:
+    """The score a signal of this family must reach (see FAMILY_MIN_SCORE)."""
+    return FAMILY_MIN_SCORE.get(strategy_type, 75.0)
+
+
+def effective_minimum_score(strategy_type: str, state: RegimeState) -> float | None:
+    """The score bar a signal of this family must clear in this regime.
+
+    ``None`` still means "this regime permits no new positions at all" — the
+    regime keeps its power of veto. What the family threshold replaces is only
+    the *height* of the bar for a regime that does permit trading, so that the
+    strategy engine and the risk engine agree. They used to disagree: the
+    strategy engine judged a candidate against its family bar and the risk
+    engine re-judged the survivor against the regime bar, so every
+    mean-reversion signal the strategy engine passed was rejected one layer
+    later and no trade could reach the broker.
+    """
+    if minimum_score(state) is None:
+        return None
+    return family_minimum_score(strategy_type)
+
+
+def family_size_multiplier(strategy_type: str, state: RegimeState) -> float:
+    """Size multiplier for this family in the current regime.
+
+    The smallest applicable multiplier across every active regime wins, so a
+    market that is both TREND_UP and HIGH_VOLATILITY sizes for the volatility.
+    """
+    multipliers = [
+        REGIME_FAMILY_SIZE_MULTIPLIER[(regime, strategy_type)]
+        for regime in state.all_regimes
+        if (regime, strategy_type) in REGIME_FAMILY_SIZE_MULTIPLIER
+    ]
+    return min(multipliers) if multipliers else 1.0
 
 
 def is_strategy_type_allowed(strategy_type: str, state: RegimeState) -> tuple[bool, str]:

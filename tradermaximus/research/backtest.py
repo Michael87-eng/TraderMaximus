@@ -40,7 +40,14 @@ from ..indicators.engine import FeatureEngine, FeatureSet
 from ..observability.journal import Journal, NULL_JOURNAL
 from ..observability.metrics import PerformanceMetrics, compute_metrics
 from ..portfolio.book import PositionBook
-from ..regime.engine import MarketContext, RegimeEngine, RegimeState, minimum_score
+from ..regime.engine import (
+    MarketContext,
+    RegimeEngine,
+    RegimeState,
+    effective_minimum_score,
+    family_size_multiplier,
+    minimum_score,
+)
 from ..risk.engine import RiskContext, RiskEngine
 from ..risk.limits import HardLimits
 from ..risk.stops import StopLossEngine
@@ -251,6 +258,7 @@ class Backtester:
                     continue
 
                 signals_generated += 1
+                strategy_type = str(selection.signal.features.get("strategy_type", ""))
                 verdict = risk.authorize(
                     selection.signal,
                     instrument,
@@ -260,8 +268,11 @@ class Backtester:
                         portfolio_drawdown=book.drawdown,
                         average_daily_volume=features.number("avg_volume_50"),
                         volatility=features.number("realized_vol_20"),
-                        minimum_score=threshold,
-                        regime_multiplier=regime.size_multiplier,
+                        minimum_score=effective_minimum_score(strategy_type, regime),
+                        regime_multiplier=(
+                            regime.size_multiplier
+                            * family_size_multiplier(strategy_type, regime)
+                        ),
                         portfolio_returns=book.returns(),
                         available_cash=book.cash,
                         data_quality_passed=True,

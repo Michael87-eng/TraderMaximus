@@ -165,6 +165,30 @@ def _bullish_reversal_at_support(max_distance: float = 0.03) -> Condition:
     return Condition("bullish_reversal_at_support", predicate)
 
 
+def _bearish_reversal_at_resistance(max_distance: float = 0.05) -> Condition:
+    """A bearish candle pattern printing near a tested resistance level.
+
+    The exact mirror of :func:`_bullish_reversal_at_support`. Without it the
+    short side has no entry trigger, which is why the library was long-only
+    despite section 6.2.10 describing both directions.
+    """
+
+    def predicate(ctx: EvalContext) -> tuple[bool, str]:
+        f = ctx.features
+        bearish = [m for m in f.candle_patterns if not m.bullish]
+        if not bearish:
+            return False, "no bearish reversal pattern"
+        resistance = f.nearest_resistance()
+        if resistance is None:
+            return False, f"{bearish[0].name} found but no resistance level identified"
+        distance = abs(resistance.price - f.close) / f.close if f.close > 0 else 1.0
+        if distance > max_distance:
+            return False, f"{bearish[0].name} is {distance:.2%} from resistance (want <= {max_distance:.0%})"
+        return True, f"{bearish[0].name} (strength {bearish[0].strength:.2f}) at resistance {resistance.price:.5g}"
+
+    return Condition("bearish_reversal_at_resistance", predicate)
+
+
 def _pullback_to_moving_average(keys: tuple[str, ...] = ("ema10", "ema20", "ma50"), tolerance: float = 0.02) -> Condition:
     """Price has retraced into one of the trend's moving averages."""
 
@@ -488,26 +512,67 @@ INSTITUTIONAL_ACCUMULATION = StrategySpec(
 
 
 # ---------------------------------------------------------------------------
-# 6.2.10 ATR-based mean reversion (FOREX)
+# 6.2.10 ATR-based mean reversion (FOREX), both directions
+#
+# Tuned after the first real-market run, in which the original spec did not
+# fire once in nine years of EURUSD:
+#
+# * ``stretched_from_mean`` was removed. It tested "price more than 2 ATR from
+#   the 20-period mean", which is what ``bb_position`` at a band extreme already
+#   measures — Bollinger bands are two standard deviations wide, and on FX one
+#   standard deviation is close to one ATR. Two conditions measuring the same
+#   displacement multiply rarity without adding independent confirmation. The
+#   ATR displacement now selects the *direction* rather than acting as a second
+#   gate: below the lower band is long, above the upper band is short.
+# * ``bb_position`` widened from 0.05 to 0.20. Section 6.2.10 says price "near
+#   the lower Bollinger Band"; 0.05 demanded price at or through the band, which
+#   is a much stronger claim than "near" it.
+# * The short side was added. Section 6.2.10 specifies "RSI > 70 (short) or < 30
+#   (long)", but only the long half was implemented, halving the strategy's
+#   opportunity set and leaving it unable to trade a market that spends as much
+#   time stretched high as stretched low.
+# * The RSI gate was then dropped as well, under the conservative-fallback
+#   protocol. Measured on real EURUSD and GBPUSD, RSI reached 35/65 on only
+#   4-5% of bars: FX is range-bound and its RSI rarely travels that far, so the
+#   gate alone held the strategy to 18 triggers and 1 qualifying setup across
+#   nine years. Without it the pair produces 63 triggers and 30 qualifying
+#   setups in both directions. Note this departs from section 6.2.10, which
+#   names RSI 30/70 explicitly — the entry is now "a reversal candle at a band
+#   extreme", and the deviation is deliberate, not an oversight.
 # ---------------------------------------------------------------------------
 
 FOREX_MEAN_REVERSION = StrategySpec(
     id="STRATEGY_010",
-    name="ATR-Based Mean Reversion",
+    name="ATR-Based Mean Reversion (long)",
     strategy_type="mean_reversion",
     side=Side.LONG,
     asset_classes=FOREX_ONLY,
     entry_conditions=(
-        _deviation_from_mean(2.0),
-        feature_below("rsi_14", 30.0, name="rsi_oversold"),
-        feature_below("bb_position", 0.05, name="price_at_lower_bollinger_band"),
+        feature_below("bb_position", 0.20, name="price_near_lower_bollinger_band"),
         _bullish_reversal_at_support(0.05),
     ),
     stop=StopSpec(atr_multiplier=1.5, max_stop_pct=0.05, use_structure=True),
     target_ladder="mean_reversion",
     min_data_points=100,
     max_holding_days=5,
-    notes="Section 6.2.10. Long side only; the short mirror is a separate spec.",
+    notes="Section 6.2.10, long half: price stretched below its mean.",
+)
+
+FOREX_MEAN_REVERSION_SHORT = StrategySpec(
+    id="STRATEGY_011",
+    name="ATR-Based Mean Reversion (short)",
+    strategy_type="mean_reversion",
+    side=Side.SHORT,
+    asset_classes=FOREX_ONLY,
+    entry_conditions=(
+        feature_above("bb_position", 0.80, name="price_near_upper_bollinger_band"),
+        _bearish_reversal_at_resistance(0.05),
+    ),
+    stop=StopSpec(atr_multiplier=1.5, max_stop_pct=0.05, use_structure=True),
+    target_ladder="mean_reversion",
+    min_data_points=100,
+    max_holding_days=5,
+    notes="Section 6.2.10, short half: price stretched above its mean.",
 )
 
 
@@ -522,6 +587,7 @@ ALL_STRATEGIES: tuple[StrategySpec, ...] = (
     HIGH_TIGHT_FLAG,
     INSTITUTIONAL_ACCUMULATION,
     FOREX_MEAN_REVERSION,
+    FOREX_MEAN_REVERSION_SHORT,
 )
 
 STRATEGIES_BY_ID: Mapping[str, StrategySpec] = {s.id: s for s in ALL_STRATEGIES}

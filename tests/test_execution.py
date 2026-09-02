@@ -132,6 +132,67 @@ class TestPaperBroker(unittest.TestCase):
         self.assertTrue(ack.accepted)
 
 
+class TestShortEquityAccounting(unittest.TestCase):
+    """Equity must not move when a position opens, long or short.
+
+    Regression: the equity property added a short's entry notional on top of
+    the cash its proceeds had already credited, so opening a short instantly
+    inflated equity by the position's full notional. The defect was invisible
+    while the strategy library was long-only. It matters because every risk
+    quantity is a fraction of equity: an over-stated equity means an
+    over-sized risk budget, a per-trade exposure cap that lets more through
+    than it should, an understated drawdown, and a distorted return series
+    feeding VaR and ES.
+    """
+
+    def _book_with(self, side: Side) -> PositionBook:
+        book = PositionBook(100_000)
+        book.open_position(
+            symbol="X",
+            asset_class=AssetClass.EQUITIES,
+            side=side,
+            quantity=100,
+            entry_price=50.0,
+            timestamp=NOW,
+            strategy_id="S",
+            stop_price=52.0 if side is Side.SHORT else 48.0,
+        )
+        return book
+
+    def test_opening_a_position_does_not_change_equity(self) -> None:
+        for side in (Side.LONG, Side.SHORT):
+            with self.subTest(side=side):
+                self.assertAlmostEqual(self._book_with(side).equity, 100_000.0, places=6)
+
+    def test_a_short_gains_when_price_falls_and_loses_when_it_rises(self) -> None:
+        book = self._book_with(Side.SHORT)
+        book.update_prices({"X": 45.0})
+        self.assertAlmostEqual(book.equity, 100_500.0, places=6)
+        book.update_prices({"X": 55.0})
+        self.assertAlmostEqual(book.equity, 99_500.0, places=6)
+
+    def test_a_long_and_a_short_of_equal_size_offset(self) -> None:
+        """A hedged pair marks flat: neither leg may contribute its notional."""
+        book = PositionBook(100_000)
+        for symbol, side in (("L", Side.LONG), ("S", Side.SHORT)):
+            book.open_position(
+                symbol=symbol, asset_class=AssetClass.EQUITIES, side=side,
+                quantity=100, entry_price=50.0, timestamp=NOW, strategy_id="S",
+                stop_price=48.0 if side is Side.LONG else 52.0,
+            )
+        book.update_prices({"L": 60.0, "S": 60.0})
+        self.assertAlmostEqual(book.equity, 100_000.0, places=6)
+
+    def test_realised_equity_matches_the_mark_it_closed_at(self) -> None:
+        """Closing a short must not move equity beyond the last mark."""
+        book = self._book_with(Side.SHORT)
+        book.update_prices({"X": 45.0})
+        marked = book.equity
+        book.reduce_position("X", 100, 45.0, timestamp=NOW, reason="target")
+        self.assertAlmostEqual(book.equity, marked, places=6)
+        self.assertAlmostEqual(book.equity, 100_500.0, places=6)
+
+
 class TestExecutionEngine(unittest.TestCase):
     def setUp(self) -> None:
         self.journal = Journal()

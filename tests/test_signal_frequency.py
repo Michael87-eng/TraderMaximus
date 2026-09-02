@@ -84,17 +84,26 @@ class TestSignalFrequency(unittest.TestCase):
         )
 
     def test_signal_rate_is_in_the_expected_band(self) -> None:
-        """Between 6 and 25 signals per 640 bars across the universe.
+        """Between 6 and 40 signals per 640 bars across the universe.
 
         Below the floor means something has become unsatisfiable. Above the
         ceiling means a filter that was doing real work has been loosened.
+
+        The ceiling was 25 while every family cleared one regime-derived bar.
+        Family-specific bars (section 7.2 as amended in docs/CALIBRATION.md)
+        let counter-trend setups qualify at 60 and mean reversion at 50, and
+        the observed rate moved to 28 per 640 bars over 8 symbols — about one
+        signal per symbol per 180 bars. The ceiling is re-anchored at 40 to
+        sit above that with room for generator noise, and deliberately not
+        higher: the point of the guard is that the next loosening still trips
+        it. Momentum, breakout and gap keep their 75 bar untouched.
         """
         per_640 = self.result.signals_generated / self.result.bars_processed * 640
         self.assertGreaterEqual(
             per_640, 6.0, f"only {per_640:.1f} signals per 640 bars; a gate has tightened"
         )
         self.assertLessEqual(
-            per_640, 25.0, f"{per_640:.1f} signals per 640 bars; a filter has been loosened"
+            per_640, 40.0, f"{per_640:.1f} signals per 640 bars; a filter has been loosened"
         )
 
     def test_trades_reach_execution(self) -> None:
@@ -195,6 +204,73 @@ class TestHardLimitsUntouched(unittest.TestCase):
         self.assertIn("relative_volume_above_1.4", names)
         self.assertIn("rsi_55_to_80", names)
         self.assertIn("within_5pct_of_52w_high", names)
+
+    def test_trend_following_families_keep_their_bar(self) -> None:
+        """Family thresholds lowered the counter-trend bar, not the trend bar."""
+        from tradermaximus.regime.engine import family_minimum_score
+
+        for family in ("momentum", "breakout", "gap", "short"):
+            self.assertEqual(family_minimum_score(family), 75.0, family)
+        self.assertEqual(family_minimum_score("an_unknown_family"), 75.0)
+
+
+class TestThresholdAgreement(unittest.TestCase):
+    """The strategy engine and the risk engine must judge against one bar.
+
+    Regression: family thresholds were added to the strategy engine only. The
+    risk engine went on re-judging the survivor against the *regime* bar, so
+    every signal the strategy engine passed at 50 was rejected one layer later
+    at 65-75 and no mean-reversion trade could reach the broker. Two layers
+    disagreeing about the bar is silent — the signal count rises and the trade
+    count stays at zero.
+    """
+
+    def test_effective_bar_matches_the_family_bar_when_trading_is_permitted(self) -> None:
+        from tradermaximus.regime.engine import (
+            Regime,
+            RegimeState,
+            effective_minimum_score,
+            family_minimum_score,
+            minimum_score,
+        )
+
+        state = RegimeState(
+            primary=Regime.HIGH_VOLATILITY, tags=frozenset(), score=40.0, confidence=0.8
+        )
+        self.assertIsNotNone(minimum_score(state))
+        for family in ("mean_reversion", "reversal", "momentum"):
+            self.assertEqual(
+                effective_minimum_score(family, state),
+                family_minimum_score(family),
+                family,
+            )
+
+    def test_a_regime_that_permits_nothing_still_vetoes(self) -> None:
+        """The family bar replaces the bar's height, never the regime's veto."""
+        from tradermaximus.regime.engine import (
+            Regime,
+            RegimeState,
+            effective_minimum_score,
+            minimum_score,
+        )
+
+        blocked = [
+            r
+            for r in Regime
+            if minimum_score(
+                RegimeState(primary=r, tags=frozenset(), score=0.0, confidence=0.8)
+            )
+            is None
+        ]
+        self.assertTrue(blocked, "expected at least one regime that permits no new positions")
+        for regime in blocked:
+            state = RegimeState(
+                primary=regime, tags=frozenset(), score=0.0, confidence=0.8
+            )
+            self.assertIsNone(
+                effective_minimum_score("mean_reversion", state),
+                f"{regime.value} must still veto outright",
+            )
 
 
 if __name__ == "__main__":

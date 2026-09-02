@@ -172,10 +172,28 @@ class PositionBook:
 
     @property
     def equity(self) -> float:
-        """Cash plus the marked value of every open position."""
+        """Cash plus the marked value of every open position.
+
+        Opening a position moves cash by ``-quantity * price * side.sign``, so
+        a short *credits* its proceeds to cash. Equity therefore adds the mark
+        of a long and subtracts the mark of a short, and nothing else:
+
+            cash    = start - sum(long entry notional) + sum(short entry notional)
+            equity  = cash  + sum(long mark)           - sum(short mark)
+                    = start + sum(long  q * (mark - entry))
+                            + sum(short q * (entry - mark))
+
+        Regression: an extra ``+ notional(entry_price)`` term was added for
+        shorts, which double-counted the credited proceeds and inflated equity
+        by a short's full entry notional for as long as it stayed open. It was
+        invisible while the library was long-only. Once the short mirror of
+        section 6.2.10 was added, 39 of 48 FOREX trades were shorts, and every
+        risk quantity computed off equity — the risk budget, the per-trade
+        exposure cap, drawdown, the return series behind VaR and ES — was being
+        measured against an equity that did not exist.
+        """
         return self.cash + sum(
-            position.notional(self.price_of(position.symbol)) * (1 if position.side is Side.LONG else -1)
-            + (position.notional(position.entry_price) if position.side is Side.SHORT else 0.0)
+            position.notional(self.price_of(position.symbol)) * position.side.sign
             for position in self._positions.values()
         )
 

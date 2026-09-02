@@ -32,9 +32,19 @@ FUNDAMENTALS = Fundamentals(
 
 
 class TestStrategyLibrary(unittest.TestCase):
-    def test_all_ten_strategies_are_defined(self) -> None:
-        self.assertEqual(len(ALL_STRATEGIES), 10)
-        self.assertEqual(len({s.id for s in ALL_STRATEGIES}), 10)
+    def test_every_spec_section_strategy_is_defined(self) -> None:
+        """The ten specified strategies, plus the short mirror of 6.2.10.
+
+        Section 6.2 names ten strategies, and 6.2.10 describes the ATR mean
+        reversion in both directions ("RSI > 70 (short) or < 30 (long)"). Only
+        the long half was implemented, so the library was long-only. The short
+        half is STRATEGY_011 rather than a side flag on STRATEGY_010 because
+        the two have different entry conditions and are scored separately.
+        """
+        self.assertEqual(len(ALL_STRATEGIES), 11)
+        self.assertEqual(len({s.id for s in ALL_STRATEGIES}), 11)
+        sides = {s.side for s in ALL_STRATEGIES}
+        self.assertIn(Side.SHORT, sides, "the library must be able to trade short")
 
     def test_every_strategy_has_entry_conditions_and_a_stop(self) -> None:
         for spec in ALL_STRATEGIES:

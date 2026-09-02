@@ -24,7 +24,12 @@ from typing import Mapping, Sequence
 from ..core.types import AssetClass, Instrument, ScoreBreakdown, Signal, Timeframe
 from ..indicators.engine import FeatureEngine, FeatureSet
 from ..observability.journal import Journal, NULL_JOURNAL
-from ..regime.engine import RegimeState, is_strategy_type_allowed, minimum_score
+from ..regime.engine import (
+    RegimeState,
+    family_minimum_score,
+    is_strategy_type_allowed,
+    minimum_score,
+)
 from .library import ALL_STRATEGIES
 from .scoring import ScoringInputs, SignalScoringEngine
 from .spec import EvalContext, Evaluation, StrategySpec
@@ -122,15 +127,23 @@ class StrategyEngine:
             self.journal.trade_decision(instrument.symbol, "NO_TRADE", reason, regime=regime.primary.value)
             return SelectionResult(instrument.symbol, None, tuple(candidates), reason, threshold)
 
-        best = max(triggered, key=lambda c: c.total)
-
-        if best.total < threshold:
+        # Each candidate is judged against its own family's bar, not one bar
+        # derived from the regime: the score measures how good a setup is *of
+        # its kind*, and a reversal is not a weak breakout.
+        qualifying = [
+            c for c in triggered if c.total >= family_minimum_score(c.spec.strategy_type)
+        ]
+        if not qualifying:
+            best = max(triggered, key=lambda c: c.total)
+            required = family_minimum_score(best.spec.strategy_type)
             reason = (
                 f"best candidate {best.spec.id} scored {best.total:.1f}, "
-                f"below the {threshold:.0f} minimum for {regime.primary.value}"
+                f"below the {required:.0f} minimum for {best.spec.strategy_type} strategies"
             )
             self.journal.trade_decision(instrument.symbol, "NO_TRADE", reason, score=best.total)
             return SelectionResult(instrument.symbol, None, tuple(candidates), reason, threshold)
+
+        best = max(qualifying, key=lambda c: c.total)
 
         if self.require_multi_timeframe and higher_timeframe is not None:
             confirmed, detail = self._confirm_higher_timeframe(best.spec, higher_timeframe)

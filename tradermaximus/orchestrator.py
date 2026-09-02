@@ -32,7 +32,14 @@ from .observability.journal import Journal, Severity
 from .observability.metrics import SystemHealth
 from .portfolio.book import PositionBook
 from .portfolio.reconciliation import ReconciliationEngine, ReconciliationReport
-from .regime.engine import MarketContext, RegimeEngine, RegimeState, minimum_score
+from .regime.engine import (
+    MarketContext,
+    RegimeEngine,
+    RegimeState,
+    effective_minimum_score,
+    family_size_multiplier,
+    minimum_score,
+)
 from .risk.circuit_breakers import CircuitBreakerEngine
 from .risk.engine import RiskContext, RiskEngine, RiskVerdict
 from .risk.kill_switch import KillSwitch, KillTrigger, SystemSignals
@@ -353,7 +360,7 @@ class TraderMaximus:
                 continue
             signals += 1
 
-            verdict = self._authorize(instrument, selection, features, threshold, size_multiplier, now)
+            verdict = self._authorize(instrument, selection, features, regime, size_multiplier, now)
             if not verdict.approved:
                 rule = verdict.rule or "unknown"
                 rejections[rule] = rejections.get(rule, 0) + 1
@@ -494,13 +501,18 @@ class TraderMaximus:
         instrument: Instrument,
         selection: SelectionResult,
         features: FeatureSet,
-        threshold: float,
+        regime: RegimeState,
         size_multiplier: float,
         now: datetime,
     ) -> RiskVerdict:
         signal = selection.signal
         assert signal is not None
         quote = self.providers.fetch_quote(instrument)
+        # The bar and the size both depend on which family the signal belongs
+        # to, which is only known once the strategy engine has chosen. Using
+        # the regime bar here would re-reject signals the strategy engine has
+        # already passed against their family bar.
+        strategy_type = str(signal.features.get("strategy_type", ""))
         return self.risk.authorize(
             signal,
             instrument,
@@ -515,8 +527,8 @@ class TraderMaximus:
                 spread_bps=quote.spread_bps if quote else None,
                 average_daily_volume=features.number("avg_volume_50"),
                 volatility=features.number("realized_vol_20"),
-                regime_multiplier=size_multiplier,
-                minimum_score=threshold,
+                regime_multiplier=size_multiplier * family_size_multiplier(strategy_type, regime),
+                minimum_score=effective_minimum_score(strategy_type, regime),
                 portfolio_returns=self.book.returns(),
                 available_cash=self.book.available_cash,
             ),

@@ -277,3 +277,127 @@ the failure mode this whole exercise exists to avoid. Whether reversal clears
 | strategies structurally able to fire | 3 of 8 | **8 of 8** |
 | hard limits changed | — | **none** |
 | tests | 180 | **205** |
+
+---
+
+# Round 3 — making the FOREX strategy tradeable
+
+Round 2 left the system generating signals on synthetic equities but taking
+**zero trades on real market data**, across all three asset classes. This round
+addressed that on FOREX, where the diagnosis was cleanest. Every change below is
+in the signal-generation path; no section 8.1 hard limit was touched, and
+`TestHardLimitsUntouched` still asserts all seventeen of them verbatim.
+
+## What was actually blocking
+
+Measured on 2,500 daily bars each of real EURUSD and GBPUSD (2017-01 to
+2026-08), sampling every bar past warm-up:
+
+| gate | pass rate |
+|---|---|
+| `rsi_14 < 35` or `> 65` | 4–5% of bars |
+| `bb_position < 0.05` or `> 0.95` | 11–14% of bars |
+| a reversal candle pattern at support/resistance | 7–8% of bars |
+| all three together | **18 bar-samples in nine years** |
+
+Of those 18, exactly **1** cleared its score threshold. FX is range-bound: its
+RSI rarely travels to 30/70, so the RSI gate alone was doing almost all the
+excluding, and it was excluding almost everything.
+
+## The fallback ladder
+
+The conservative-fallback protocol was run as a measured ladder rather than a
+guess, on the same 2,180 bar-samples:
+
+| stage | entry conditions | threshold | triggers | qualifying | long | short |
+|---|---|---|---|---|---|---|
+| A | bb + rsi + pattern | 60 | 18 | 1 | 0 | 1 |
+| B | bb + pattern | 50 | 63 | **30** | 7 | 23 |
+| C | bb only | 50 | 919 | 532 | 234 | 298 |
+
+Stage B was taken. Stage C removes the only remaining confirmation and turns
+the strategy into "trade every band touch", which is not a strategy.
+
+## Changes made
+
+1. **`stretched_from_mean` removed** from the entry conjunction. It measured
+   displacement from the 20-period mean in ATRs; `bb_position` at a band
+   extreme measures the same displacement in standard deviations, and on FX
+   those are close to the same number. ATR displacement now selects the
+   *direction* instead of acting as a second gate.
+2. **`bb_position` widened** from 0.05 to 0.20. §6.2.10 says "near the lower
+   band"; 0.05 demanded price at or through it.
+3. **The short side was implemented.** §6.2.10 specifies both directions
+   ("RSI > 70 (short) or < 30 (long)") and only the long half existed, so the
+   library could not trade short at all. `_bearish_reversal_at_resistance` is
+   the exact mirror of `_bullish_reversal_at_support`; STRATEGY_011 is a
+   separate spec because it is scored separately.
+4. **The RSI gate was dropped** from both mean-reversion specs. This is a
+   deliberate departure from §6.2.10's stated 30/70, recorded here so it is
+   visible rather than buried: the entry is now "a reversal candle at a band
+   extreme".
+5. **Family-specific score thresholds** (`FAMILY_MIN_SCORE`) replace the
+   regime-derived bar's *height*. Momentum, breakout, gap and short stay at 75
+   untouched; CAN SLIM, institutional and pullback at 65; reversal and
+   oscillator at 60; mean reversion at 50 under the fallback. A regime that
+   permits no new positions still vetoes outright.
+6. **Mean reversion is no longer vetoed by trend regimes.** It is permitted
+   wherever trading is permitted and sized at **0.5x** in HIGH_VOLATILITY and
+   VOLATILITY_EXPANSION (`REGIME_FAMILY_SIZE_MULTIPLIER`) instead.
+
+## Two defects the changes exposed
+
+Both were pre-existing and both were invisible until the system traded short.
+
+**The strategy engine and the risk engine disagreed about the bar.** Family
+thresholds were added to the strategy engine only. The risk engine went on
+re-judging the survivor against the *regime* bar, so every mean-reversion
+signal passed at 50 was rejected one layer later at 65–75 and the trade count
+stayed at zero while the signal count rose. `effective_minimum_score` now
+serves both layers. Pinned by `TestThresholdAgreement`.
+
+**Opening a short inflated equity by its full notional.** Opening a position
+credits or debits cash by `-quantity * price * side.sign`, so a short's
+proceeds are already in cash; the equity property then added the short's entry
+notional *again*. While the library was long-only this term never fired. With
+39 of 48 FOREX trades short, every risk quantity computed as a fraction of
+equity — the risk budget, the per-trade exposure cap, drawdown, and the return
+series behind VaR and ES — was measured against equity that did not exist. The
+visible symptom was one position sized at 5.22% of equity against a 5.0% cap,
+and a reported max drawdown of 8.9% that fell to 0.4% once corrected. Pinned by
+`TestShortEquityAccounting`.
+
+## Result on real FOREX history
+
+EURUSD + GBPUSD, 2017-01 to 2026-08, 2,500 daily bars each, 300-bar warm-up,
+$100k starting equity, chronological 70/30 split.
+
+| | in-sample | out-of-sample | full span |
+|---|---|---|---|
+| trades | 28 | 20 | 48 |
+| win rate | 42.9% | 35.0% | 39.6% |
+| profit factor | 1.47 | **1.00** | 1.24 |
+| Sharpe (252/yr) | 0.35 | **-0.01** | 0.21 |
+| max drawdown | 0.4% | 0.4% | 0.5% |
+
+| | trades | win rate | PF | avg R |
+|---|---|---|---|---|
+| STRATEGY_010 (long) | 9 | 33.3% | 1.29 | +0.18 |
+| STRATEGY_011 (short) | 39 | 41.0% | 1.23 | +0.14 |
+
+Walk-forward 3/3 windows profitable, mean PF 1.18. Monte Carlo (bootstrap)
+75.9% of resamples profitable, against a 95% acceptance bar. Average win
+$133.23 against average loss $70.18, a 1.90 ratio.
+
+Risk compliance across all 48 trades: worst committed risk 0.168% against the
+0.5% cap, worst exposure 4.94% against the 5.0% cap, worst loss -1.00R, **zero
+violations**.
+
+## Verdict
+
+The system trades, in both directions, within every limit. It does not clear
+the deployment gate: out-of-sample profit factor is 1.00 against a required
+1.3, and out-of-sample Sharpe is -0.01 against a required 0.7. The
+out-of-sample edge is indistinguishable from zero, and the drop from an
+in-sample PF of 1.47 to 1.00 is the signature of a specification fitted to the
+period it was written in. **Do not deploy.**

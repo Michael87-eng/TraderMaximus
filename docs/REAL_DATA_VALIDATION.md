@@ -143,3 +143,22 @@ choice, and neither touches a §8.1 hard limit:
 
 Both are judgement calls about the specification, not bugs. They are recorded
 here rather than actioned so the choice is visible.
+
+**Both were subsequently actioned**, under the tuning brief and the
+conservative-fallback protocol. The measurements, the ladder that chose the
+fallback stage, and the two defects the change exposed are in
+[CALIBRATION.md](CALIBRATION.md#round-3--making-the-forex-strategy-tradeable).
+
+## Where this stands
+
+FOREX now trades in both directions: 48 trades over nine years of real EURUSD
+and GBPUSD, in-sample profit factor 1.47 and out-of-sample 1.00, zero risk-limit
+violations. It **fails the deployment gate** (out-of-sample PF 1.00 against 1.3,
+Sharpe -0.01 against 0.7), so it is not deployed and no pull request was opened.
+
+Equities and crypto have not been re-validated since the tuning. Both were
+blocked by the same two mechanisms — over-conjoined entries and the
+threshold contradiction — but their strategies are trend-following, and the
+family thresholds deliberately left momentum, breakout and gap at 75. Whether
+those families ever trigger on real history is a separate, unanswered
+question.
