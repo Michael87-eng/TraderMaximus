@@ -1,0 +1,1116 @@
+{
+ "probed_at_utc": "2026-11-09T17:24:25Z",
+ "scope_note": "Reachability / shape / span / units only. No assessment of trading value was made, per task scope.",
+ "endpoints": [
+  {
+   "name": "historicalChainTvl_all",
+   "exact_url": "https://api.llama.fi/v2/historicalChainTvl",
+   "http_status": 200,
+   "elapsed_s": 0.47,
+   "response_bytes": 123692,
+   "content_type": "application/json",
+   "freshness_headers": {
+    "Date": "Mon, 09 Nov 2026 17:24:25 GMT",
+    "Age": "243"
+   },
+   "top_level_type": "list",
+   "top_level_keys": null,
+   "top_level_length": 3331,
+   "structure": [
+    {
+     "date": "int(e.g. 1506470400)",
+     "tvl": "int(e.g. 0)"
+    },
+    "...len=3331"
+   ],
+   "time_series": {
+    "path": "$",
+    "timestamp_field": "date",
+    "timestamp_format": "unix seconds (UTC)",
+    "points": 3331,
+    "earliest_raw": 1506470400,
+    "earliest_utc": "2017-09-27T00:00:00Z",
+    "latest_raw": 1794182400,
+    "latest_utc": "2026-11-09T00:00:00Z",
+    "latest_vs_probe_time_hours": 17.41,
+    "modal_step_seconds": 86400,
+    "step_seconds_histogram": {
+     "86400": 3330
+    },
+    "distinct_step_count": 1,
+    "record_fields": [
+     "date",
+     "tvl"
+    ],
+    "first_record": {
+     "date": 1506470400,
+     "tvl": 0
+    },
+    "last_record": {
+     "date": 1794182400,
+     "tvl": 79003625907
+    }
+   },
+   "semantics": {
+    "fields": {
+     "date": "unix seconds, UTC, 00:00:00Z aligned (JSON int)",
+     "tvl": "USD, absolute dollars"
+    },
+    "granularity": "daily (86400 s), uniform - 1 distinct step across the whole series",
+    "coverage": "aggregate TVL across all chains DefiLlama tracks"
+   },
+   "structural_findings": {
+    "leading_zero_tvl_days": 138,
+    "first_nonzero_utc": "2018-02-12T00:00:00Z",
+    "total_zero_tvl_days": 138,
+    "tvl_units": "USD (absolute dollars, not millions)",
+    "date_type": "int",
+    "date_alignment": "all 00:00:00Z",
+    "latest_value": 79003625907,
+    "latest_utc": "2026-11-09T00:00:00Z"
+   },
+   "publication_lag_determinable_from_response_alone": false,
+   "publication_lag_evidence_in_response": "NO. The body carries no as-of, published-at, revision or finality field. The only time-related HTTP headers are Date (origin/CDN clock) and Age (seconds since the CDN cached THIS response) - Age describes cache staleness, not how stale the underlying data is, and says nothing about whether the most recent data point is final or still accumulating."
+  },
+  {
+   "name": "historicalChainTvl_Ethereum",
+   "exact_url": "https://api.llama.fi/v2/historicalChainTvl/Ethereum",
+   "http_status": 200,
+   "elapsed_s": 0.17,
+   "response_bytes": 123004,
+   "content_type": "application/json",
+   "freshness_headers": {
+    "Date": "Mon, 09 Nov 2026 17:24:25 GMT",
+    "Age": "263"
+   },
+   "top_level_type": "list",
+   "top_level_keys": null,
+   "top_level_length": 3331,
+   "structure": [
+    {
+     "date": "int(e.g. 1506470400)",
+     "tvl": "int(e.g. 0)"
+    },
+    "...len=3331"
+   ],
+   "time_series": {
+    "path": "$",
+    "timestamp_field": "date",
+    "timestamp_format": "unix seconds (UTC)",
+    "points": 3331,
+    "earliest_raw": 1506470400,
+    "earliest_utc": "2017-09-27T00:00:00Z",
+    "latest_raw": 1794182400,
+    "latest_utc": "2026-11-09T00:00:00Z",
+    "latest_vs_probe_time_hours": 17.41,
+    "modal_step_seconds": 86400,
+    "step_seconds_histogram": {
+     "86400": 3330
+    },
+    "distinct_step_count": 1,
+    "record_fields": [
+     "date",
+     "tvl"
+    ],
+    "first_record": {
+     "date": 1506470400,
+     "tvl": 0
+    },
+    "last_record": {
+     "date": 1794182400,
+     "tvl": 41953070615
+    }
+   },
+   "semantics": {
+    "fields": {
+     "date": "unix seconds, UTC, 00:00:00Z aligned (JSON int)",
+     "tvl": "USD, absolute dollars"
+    },
+    "granularity": "daily (86400 s), uniform - 1 distinct step across the whole series",
+    "coverage": "Ethereum chain only"
+   },
+   "structural_findings": {
+    "leading_zero_tvl_days": 138,
+    "first_nonzero_utc": "2018-02-12T00:00:00Z",
+    "total_zero_tvl_days": 138,
+    "tvl_units": "USD (absolute dollars, not millions)",
+    "date_type": "int",
+    "date_alignment": "all 00:00:00Z",
+    "latest_value": 41953070615,
+    "latest_utc": "2026-11-09T00:00:00Z"
+   },
+   "publication_lag_determinable_from_response_alone": false,
+   "publication_lag_evidence_in_response": "NO. The body carries no as-of, published-at, revision or finality field. The only time-related HTTP headers are Date (origin/CDN clock) and Age (seconds since the CDN cached THIS response) - Age describes cache staleness, not how stale the underlying data is, and says nothing about whether the most recent data point is final or still accumulating."
+  },
+  {
+   "name": "overview_dexs",
+   "exact_url": "https://api.llama.fi/overview/dexs?excludeTotalDataChart=true",
+   "http_status": 200,
+   "elapsed_s": 2.75,
+   "response_bytes": 21259901,
+   "content_type": "application/json; charset=utf-8",
+   "freshness_headers": {
+    "Date": "Mon, 09 Nov 2026 17:24:26 GMT"
+   },
+   "top_level_type": "dict",
+   "top_level_keys": [
+    "totalDataChart",
+    "totalDataChartBreakdown",
+    "breakdown24h",
+    "breakdown30d",
+    "chain",
+    "allChains",
+    "total24h",
+    "total48hto24h",
+    "totalLastFullDay",
+    "total7d",
+    "total14dto7d",
+    "total30d",
+    "total60dto30d",
+    "total1y",
+    "total7DaysAgo",
+    "total30DaysAgo",
+    "totalAllTime",
+    "change_1d",
+    "change_7d",
+    "change_1m",
+    "change_7dover7d",
+    "change_30dover30d",
+    "protocols"
+   ],
+   "top_level_length": 23,
+   "structure": {
+    "totalDataChart": [],
+    "totalDataChartBreakdown": [
+     [
+      "int(e.g. 1392595200)",
+      "...len=2"
+     ],
+     "...len=4649"
+    ],
+    "breakdown24h": "null",
+    "breakdown30d": "null",
+    "chain": "null",
+    "allChains": [
+     "str(e.g. Ethereum)",
+     "...len=298"
+    ],
+    "total24h": "float(e.g. 6215140507.689998)",
+    "total48hto24h": "float(e.g. 4925574212.129998)",
+    "totalLastFullDay": "float(e.g. 6102592299.669998)",
+    "total7d": "float(e.g. 59908516385.669945)",
+    "total14dto7d": "float(e.g. 63972577700.94002)",
+    "total30d": "float(e.g. 247026041991.15976)",
+    "total60dto30d": "float(e.g. 290570898761.53)",
+    "total1y": "float(e.g. 3241719284352.567)",
+    "total7DaysAgo": "float(e.g. 5309139553.8)",
+    "total30DaysAgo": "float(e.g. 7294504858.180001)",
+    "totalAllTime": "float(e.g. 14431663353318.402)",
+    "change_1d": "float(e.g. 26.18)",
+    "change_7d": "float(e.g. 17.06)",
+    "change_1m": "float(e.g. -14.8)",
+    "change_7dover7d": "float(e.g. -6.35)",
+    "change_30dover30d": "float(e.g. -14.99)",
+    "protocols": [
+     {
+      "total24h": "int(e.g. 182934176)",
+      "total48hto24h": "int(e.g. 54419923)",
+      "totalLastFullDay": "int(e.g. 102109714)",
+      "total7d": "int(e.g. 2219384207)",
+      "total14dto7d": "int(e.g. 1768496100)",
+      "total30d": "int(e.g. 5032272913)",
+      "total60dto30d": "int(e.g. 3077465952)",
+      "total1y": "int(e.g. 65787853301)",
+      "annualized1y": "int(e.g. 65787853301)",
+      "total7DaysAgo": "int(e.g. 51961439)",
+      "total30DaysAgo": "int(e.g. 73427551)",
+      "totalAllTime": "int(e.g. 357649168957)",
+      "average1y": "float(e.g. 180240693.97534245)",
+      "monthlyAverage1y": "float(e.g. 5486526724.609425)",
+      "change_1d": "float(e.g. 236.15)",
+      "change_7d": "float(e.g. 252.06)",
+      "change_1m": "float(e.g. 149.14)",
+      "change_7dover7d": "float(e.g. 25.5)",
+      "change_30dover30d": "float(e.g. 63.52)",
+      "breakdown24h": {
+       "optimism": "...",
+       "base": "...",
+       "hyperliquid": "...",
+       "fraxtal": "...",
+       "arbitrum": "...",
+       "bsc": "...",
+       "sonic": "...",
+       "xdai": "...",
+       "polygon": "...",
+       "ethereum": "...",
+       "unichain": "...",
+       "monad": "...",
+       "robinhood": "...",
+       "mantle": "...",
+       "celo": "...",
+       "avax": "...",
+       "ink": "...",
+       "plasma": "...",
+       "stable": "..."
+      },
+      "breakdown30d": {
+       "ethereum": "...",
+       "arbitrum": "...",
+       "optimism": "...",
+       "bsc": "...",
+       "polygon": "...",
+       "base": "...",
+       "xdai": "...",
+       "fraxtal": "...",
+       "sonic": "...",
+       "hyperliquid": "...",
+       "unichain": "...",
+       "mantle": "...",
+       "robinhood": "...",
+       "monad": "...",
+       "ink": "...",
+       "celo": "...",
+       "avax": "...",
+       "stable": "...",
+       "plasma": "..."
+      },
+      "defillamaId": "str(e.g. 3)",
+      "name": "str(e.g. Curve DEX)",
+      "displayName": "str(e.g. Curve DEX)",
+      "module": "str(e.g. curve)"
+     },
+     "...len=1587"
+    ]
+   },
+   "time_series": null,
+   "semantics": {
+    "fields": {
+     "total24h/total7d/total30d/total1y/totalAllTime/totalLastFullDay/total48hto24h/total14dto7d/total60dto30d/total7DaysAgo/total30DaysAgo": "USD DEX volume",
+     "change_1d/change_7d/change_1m/change_7dover7d/change_30dover30d": "percent",
+     "totalDataChart": "emptied by excludeTotalDataChart=true",
+     "totalDataChartBreakdown": "[unix_seconds, {protocol_name: USD volume}] - NOT excluded by the param",
+     "protocols": "array of per-protocol records, 35 fields each",
+     "allChains": "array of chain names"
+    },
+    "granularity": "daily (86400 s) in totalDataChartBreakdown; the aggregate fields are rolling windows, not a series",
+    "coverage": "DEX volume overview, all chains"
+   },
+   "structural_findings": {
+    "totalDataChart_len_after_exclude": 0,
+    "totalDataChartBreakdown_len": 4649,
+    "NOTE_excludeTotalDataChart_effect": "empties totalDataChart only; totalDataChartBreakdown is still returned in full, which is why the response is ~21 MB",
+    "breakdown_timestamp_field": "element[0], unix seconds UTC",
+    "breakdown_earliest_utc": "2014-02-17T00:00:00Z",
+    "breakdown_latest_utc": "2026-11-09T00:00:00Z",
+    "breakdown_points": 4649,
+    "breakdown_modal_step_seconds": 86400,
+    "breakdown_step_histogram": {
+     "86400": 4648
+    },
+    "breakdown_distinct_steps": 1,
+    "breakdown_value_shape": "element[1] = {chain: {protocol: usd_volume}}",
+    "breakdown_first_entry_chains": [
+     "Counterparty DEX"
+    ],
+    "breakdown_last_entry_chain_count": 1107,
+    "protocols_len": 1587,
+    "protocol_record_fields": [
+     "total24h",
+     "total48hto24h",
+     "totalLastFullDay",
+     "total7d",
+     "total14dto7d",
+     "total30d",
+     "total60dto30d",
+     "total1y",
+     "annualized1y",
+     "total7DaysAgo",
+     "total30DaysAgo",
+     "totalAllTime",
+     "average1y",
+     "monthlyAverage1y",
+     "change_1d",
+     "change_7d",
+     "change_1m",
+     "change_7dover7d",
+     "change_30dover30d",
+     "breakdown24h",
+     "breakdown30d",
+     "defillamaId",
+     "name",
+     "displayName",
+     "module",
+     "category",
+     "logo",
+     "chains",
+     "protocolType",
+     "methodologyURL",
+     "methodology",
+     "parentProtocol",
+     "slug",
+     "linkedProtocols",
+     "id"
+    ],
+    "allChains_len": 298,
+    "aggregate_fields_units": "total24h/total7d/total30d/total1y/totalAllTime/totalLastFullDay/total*Ago = USD volume; change_* = percent",
+    "CORRECTION": "an earlier automated scan mislabelled total24h/total7d/etc as unix timestamps; they are USD volume amounts, NOT timestamps"
+   },
+   "WARNING_false_positive_removed": "An automated scan initially flagged total24h/total7d/etc. as unix timestamps because their magnitudes fall in the 1e9-1e11 range. They are USD volume amounts. No timestamp scalars exist at the top level of this endpoint.",
+   "publication_lag_determinable_from_response_alone": false,
+   "publication_lag_evidence_in_response": "NO. The body carries no as-of, published-at, revision or finality field. The only time-related HTTP headers are Date (origin/CDN clock) and Age (seconds since the CDN cached THIS response) - Age describes cache staleness, not how stale the underlying data is, and says nothing about whether the most recent data point is final or still accumulating."
+  },
+  {
+   "name": "stablecoincharts_all",
+   "exact_url": "https://stablecoins.llama.fi/stablecoincharts/all",
+   "http_status": 200,
+   "elapsed_s": 0.26,
+   "response_bytes": 1343777,
+   "content_type": "application/json; charset=utf-8",
+   "freshness_headers": {
+    "Date": "Mon, 09 Nov 2026 17:24:28 GMT",
+    "Age": "249"
+   },
+   "top_level_type": "list",
+   "top_level_keys": null,
+   "top_level_length": 3268,
+   "structure": [
+    {
+     "date": "str(e.g. 1511913600)",
+     "totalCirculating": {
+      "peggedUSD": "int(e.g. 109970)"
+     },
+     "totalCirculatingUSD": {
+      "peggedUSD": "int(e.g. 110105)"
+     }
+    },
+    "...len=3268"
+   ],
+   "time_series": {
+    "path": "$",
+    "timestamp_field": "date",
+    "timestamp_format": "unix seconds (UTC)",
+    "points": 3268,
+    "earliest_raw": 1511913600,
+    "earliest_utc": "2017-11-29T00:00:00Z",
+    "latest_raw": 1794182400,
+    "latest_utc": "2026-11-09T00:00:00Z",
+    "latest_vs_probe_time_hours": 17.41,
+    "modal_step_seconds": 86400,
+    "step_seconds_histogram": {
+     "86400": 3267
+    },
+    "distinct_step_count": 1,
+    "record_fields": [
+     "date",
+     "totalCirculating",
+     "totalCirculatingUSD"
+    ],
+    "first_record": {
+     "date": "1511913600",
+     "totalCirculating": {
+      "peggedUSD": 109970
+     },
+     "totalCirculatingUSD": {
+      "peggedUSD": 110105
+     }
+    },
+    "last_record": {
+     "date": "1794182400",
+     "totalCirculating": {
+      "peggedUSD": 293434027470.94,
+      "peggedVAR": 10008192789.17,
+      "peggedEUR": 758055328.32,
+      "peggedJPY": 23697477218.94,
+      "peggedCNY": 24050,
+      "peggedUAH": 140064.48,
+      "peggedARS": 14531728571.8,
+      "peggedGBP": 21550391.31,
+      "peggedCAD": 7951000.69,
+      "peggedCHF": 38081745.94,
+      "peggedAUD": 17980160.13,
+      "peggedREAL": 352977333.57,
+      "peggedRUB": 47329972514.03,
+      "peggedMXN": 31804168.74,
+      "peggedSGD": 16015267.4,
+      "peggedPHP": 226631405.53,
+      "peggedTRY": 213485013.62,
+      "peggedCOP": 5321713718.56,
+      "peggedKES": 8688598.21,
+      "peggedZAR": 11041.07,
+      "peggedNGN": 29023865.55,
+      "peggedXOF": 5366598,
+      "peggedGHS": 271629,
+      "peggedCLP": 96353077.02,
+      "peggedPEN": 109633.05,
+      "peggedMYR": 221360.16,
+      "peggedKRW": 784693312.14,
+      "peggedHKD": 103102419.91,
+      "peggedAED": 48280499,
+      "peggedIDR": 2038739343.45
+     },
+     "totalUnreleased": {
+      "peggedUSD": 28471730081095.74,
+      "peggedVAR": 4543107.47,
+      "peggedEUR": 10005037437548.98,
+      "peggedJPY": 10095437168.68,
+      "peggedCNY": 0,
+      "peggedUAH": 0,
+      "peggedARS": 810998863.35,
+      "peggedGBP": 1001879.18,
+      "peggedCAD": 0,
+      "peggedCHF": 0,
+      "peggedAUD": 0,
+      "peggedREAL": 2842.31,
+      "peggedRUB": 683.49,
+      "peggedMXN": 9530461.07,
+      "peggedSGD": 0,
+      "peggedPHP": 0,
+      "peggedTRY": 180622474.29,
+      "peggedCOP": 1132848349.04,
+      "peggedKES": 0,
+      "peggedZAR": 0,
+      "peggedNGN": 0,
+      "peggedXOF": 0,
+      "peggedGHS": 0,
+      "peggedCLP": 112035.98,
+      "peggedPEN": 32967,
+      "peggedMYR": 10030,
+      "peggedKRW": 0,
+      "peggedHKD": 0,
+      "peggedAED": 0,
+      "peggedIDR": 0
+     },
+     "totalCirculatingUSD": {
+      "peggedUSD": 293008620022.67,
+      "peggedVAR": 8873779.88,
+      "peggedEUR": 845233860.2,
+      "peggedJPY": 149409469.04,
+      "peggedCNY": 3602.19,
+      "peggedUAH": 3085.56,
+      "peggedARS": 8721177.06,
+      "peggedGBP": 28886154.04,
+      "peggedCAD": 5625108.1,
+      "peggedCHF": 46365313.92,
+      "peggedAUD": 12159344.91,
+      "peggedREAL": 61361813.01,
+      "peggedRUB": 577556033.97,
+      "peggedMXN": 1711634.56,
+      "peggedSGD": 12513164.83,
+      "peggedPHP": 3592102.8,
+      "peggedTRY": 4254529.98,
+      "peggedCOP": 1643064.53,
+      "peggedKES": 67120.61,
+      "peggedZAR": 667.33,
+      "peggedNGN": 21521.37,
+      "peggedXOF": 9119.98,
+      "peggedGHS": 23428.34,
+      "peggedCLP": 100020.77,
+      "peggedPEN": 31966.31,
+      "peggedMYR": 54508.78,
+      "peggedKRW": 546310.7,
+      "peggedHKD": 13151724.72,
+      "peggedAED": 13146493.94,
+      "peggedIDR": 112624.36
+     },
+     "totalMintedUSD": {
+      "peggedUSD": 0,
+      "peggedVAR": 0,
+      "peggedEUR": 0,
+      "peggedJPY": 0,
+      "peggedCNY": 0,
+      "peggedUAH": 0,
+      "peggedARS": 0,
+      "peggedGBP": 0,
+      "peggedCAD": 0,
+      "peggedCHF": 0,
+      "peggedAUD": 0,
+      "peggedREAL": 0,
+      "peggedRUB": 0,
+      "peggedMXN": 0,
+      "peggedSGD": 0,
+      "peggedPHP": 0,
+      "peggedTRY": 0,
+      "peggedCOP": 0,
+      "peggedKES": 0,
+      "peggedZAR": 0,
+      "peggedNGN": 0,
+      "peggedXOF": 0,
+      "peggedGHS": 0,
+      "peggedCLP": 0,
+      "peggedPEN": 0,
+      "peggedMYR": 0,
+      "peggedKRW": 0,
+      "peggedHKD": 0,
+      "peggedAED": 0,
+      "peggedIDR": 0
+     },
+     "totalBridgedToUSD": {
+      "peggedUSD": 0,
+      "peggedVAR": 0,
+      "peggedEUR": 0,
+      "peggedJPY": 0,
+      "peggedCNY": 0,
+      "peggedUAH": 0,
+      "peggedARS": 0,
+      "peggedGBP": 0,
+      "peggedCAD": 0,
+      "peggedCHF": 0,
+      "peggedAUD": 0,
+      "peggedREAL": 0,
+      "peggedRUB": 0,
+      "peggedMXN": 0,
+      "peggedSGD": 0,
+      "peggedPHP": 0,
+      "peggedTRY": 0,
+      "peggedCOP": 0,
+      "peggedKES": 0,
+      "peggedZAR": 0,
+      "peggedNGN": 0,
+      "peggedXOF": 0,
+      "peggedGHS": 0,
+      "peggedCLP": 0,
+      "peggedPEN": 0,
+      "peggedMYR": 0,
+      "peggedKRW": 0,
+      "peggedHKD": 0,
+      "peggedAED": 0,
+      "peggedIDR": 0
+     }
+    }
+   },
+   "semantics": {
+    "fields": {
+     "date": "unix seconds, UTC, 00:00:00Z aligned (JSON STRING, not int)",
+     "totalCirculating": "dict keyed by peg type; value is in units OF THE PEGGED ASSET (peggedEUR is EUR, peggedJPY is JPY)",
+     "totalCirculatingUSD": "dict keyed by peg type; value in USD",
+     "totalUnreleased": "dict keyed by peg type; absent from the earliest 476 records",
+     "totalMintedUSD / totalBridgedToUSD": "present in exactly ONE record (the final one)"
+    },
+    "granularity": "daily (86400 s), uniform",
+    "coverage": "all stablecoins, all chains"
+   },
+   "structural_findings": {
+    "date_type": "str",
+    "date_type_note": "date is a JSON STRING of unix seconds, unlike historicalChainTvl where it is an int",
+    "date_alignment": "all 00:00:00Z",
+    "top_level_record_keysets": {
+     "['date', 'totalCirculating', 'totalCirculatingUSD']": 476,
+     "['date', 'totalCirculating', 'totalCirculatingUSD', 'totalUnreleased']": 2791,
+     "['date', 'totalBridgedToUSD', 'totalCirculating', 'totalCirculatingUSD', 'totalMintedUSD', 'totalUnreleased']": 1
+    },
+    "peg_keys_first_record": [
+     "peggedUSD"
+    ],
+    "peg_keys_last_record": [
+     "peggedUSD",
+     "peggedVAR",
+     "peggedEUR",
+     "peggedJPY",
+     "peggedCNY",
+     "peggedUAH",
+     "peggedARS",
+     "peggedGBP",
+     "peggedCAD",
+     "peggedCHF",
+     "peggedAUD",
+     "peggedREAL",
+     "peggedRUB",
+     "peggedMXN",
+     "peggedSGD",
+     "peggedPHP",
+     "peggedTRY",
+     "peggedCOP",
+     "peggedKES",
+     "peggedZAR",
+     "peggedNGN",
+     "peggedXOF",
+     "peggedGHS",
+     "peggedCLP",
+     "peggedPEN",
+     "peggedMYR",
+     "peggedKRW",
+     "peggedHKD",
+     "peggedAED",
+     "peggedIDR"
+    ],
+    "peg_keys_union_over_series": [
+     "peggedAED",
+     "peggedARS",
+     "peggedAUD",
+     "peggedCAD",
+     "peggedCHF",
+     "peggedCLP",
+     "peggedCNY",
+     "peggedCOP",
+     "peggedEUR",
+     "peggedGBP",
+     "peggedGHS",
+     "peggedHKD",
+     "peggedIDR",
+     "peggedJPY",
+     "peggedKES",
+     "peggedKRW",
+     "peggedMXN",
+     "peggedMYR",
+     "peggedNGN",
+     "peggedPEN",
+     "peggedPHP",
+     "peggedREAL",
+     "peggedRUB",
+     "peggedSGD",
+     "peggedTRY",
+     "peggedUAH",
+     "peggedUSD",
+     "peggedVAR",
+     "peggedXOF",
+     "peggedZAR"
+    ],
+    "peg_key_count_first": 1,
+    "peg_key_count_last": 30,
+    "units": "totalCirculating[pegKey] = units of the pegged asset (e.g. peggedEUR is EUR); totalCirculatingUSD[pegKey] = USD value. Summing totalCirculating across pegs mixes currencies.",
+    "schema_warning": "the set of peg keys GROWS over the series; a parser that fixes columns from the first record will silently drop pegs"
+   },
+   "publication_lag_determinable_from_response_alone": false,
+   "publication_lag_evidence_in_response": "NO. The body carries no as-of, published-at, revision or finality field. The only time-related HTTP headers are Date (origin/CDN clock) and Age (seconds since the CDN cached THIS response) - Age describes cache staleness, not how stale the underlying data is, and says nothing about whether the most recent data point is final or still accumulating."
+  },
+  {
+   "name": "prices_current_bitcoin",
+   "exact_url": "https://coins.llama.fi/prices/current/coingecko:bitcoin",
+   "http_status": 200,
+   "elapsed_s": 0.16,
+   "response_bytes": 112,
+   "content_type": "application/json; charset=utf-8",
+   "freshness_headers": {
+    "Date": "Mon, 09 Nov 2026 17:24:29 GMT",
+    "Age": "236"
+   },
+   "top_level_type": "dict",
+   "top_level_keys": [
+    "coins"
+   ],
+   "top_level_length": 1,
+   "structure": {
+    "coins": {
+     "coingecko:bitcoin": {
+      "price": "float(e.g. 74732.6537831)",
+      "symbol": "str(e.g. BTC)",
+      "timestamp": "int(e.g. 1794244827)",
+      "confidence": "float(e.g. 0.999)"
+     }
+    }
+   },
+   "time_series": null,
+   "semantics": {
+    "fields": {
+     "price": "USD",
+     "symbol": "ticker string",
+     "timestamp": "unix seconds, UTC - a spot observation time, NOT a bar boundary",
+     "confidence": "0-1 score, meaning not defined by the response"
+    },
+    "granularity": "point-in-time snapshot, not a time series",
+    "coverage": "single asset, current price only"
+   },
+   "timestamp_scalar": {
+    "coins.coingecko:bitcoin.timestamp": {
+     "raw": 1794244827,
+     "utc": "2026-11-09T17:20:27Z"
+    }
+   },
+   "publication_lag_determinable_from_response_alone": false,
+   "publication_lag_evidence_in_response": "NO. The body carries no as-of, published-at, revision or finality field. The only time-related HTTP headers are Date (origin/CDN clock) and Age (seconds since the CDN cached THIS response) - Age describes cache staleness, not how stale the underlying data is, and says nothing about whether the most recent data point is final or still accumulating."
+  }
+ ],
+ "publication_lag_verdict": "INSUFFICIENT EVIDENCE from a single response for every endpoint probed. See reprobe_experiment for what two spaced responses did show.",
+ "reprobe_experiment": {
+  "historicalChainTvl_all": {
+   "snap1": {
+    "at": "2026-11-09T17:26:10Z",
+    "server_date": "Mon, 09 Nov 2026 17:26:10 GMT",
+    "age": "1",
+    "points": 3331,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 79021985782,
+    "last_record_keys": [
+     "date",
+     "tvl"
+    ]
+   },
+   "snap2": {
+    "at": "2026-11-09T17:41:11Z",
+    "server_date": "Mon, 09 Nov 2026 17:41:11 GMT",
+    "age": "274",
+    "points": 3331,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 79021985782,
+    "last_record_keys": [
+     "date",
+     "tvl"
+    ]
+   },
+   "seconds_between": 900,
+   "last_point_timestamp_changed": false,
+   "last_point_value_changed": false,
+   "point_count_changed": false
+  },
+  "historicalChainTvl_Ethereum": {
+   "snap1": {
+    "at": "2026-11-09T17:26:10Z",
+    "server_date": "Mon, 09 Nov 2026 17:26:10 GMT",
+    "age": "41",
+    "points": 3331,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 41972455634,
+    "last_record_keys": [
+     "date",
+     "tvl"
+    ]
+   },
+   "snap2": {
+    "at": "2026-11-09T17:41:11Z",
+    "server_date": "Mon, 09 Nov 2026 17:41:11 GMT",
+    "age": null,
+    "points": 3331,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 41972455634,
+    "last_record_keys": [
+     "date",
+     "tvl"
+    ]
+   },
+   "seconds_between": 900,
+   "last_point_timestamp_changed": false,
+   "last_point_value_changed": false,
+   "point_count_changed": false
+  },
+  "stablecoincharts_all": {
+   "snap1": {
+    "at": "2026-11-09T17:26:10Z",
+    "server_date": "Mon, 09 Nov 2026 17:26:10 GMT",
+    "age": "39",
+    "points": 3268,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 293008620022.67,
+    "last_record_keys": [
+     "date",
+     "totalBridgedToUSD",
+     "totalCirculating",
+     "totalCirculatingUSD",
+     "totalMintedUSD",
+     "totalUnreleased"
+    ]
+   },
+   "snap2": {
+    "at": "2026-11-09T17:41:12Z",
+    "server_date": "Mon, 09 Nov 2026 17:41:11 GMT",
+    "age": "19",
+    "points": 3268,
+    "last_point_utc": "2026-11-09T00:00:00Z",
+    "last_point_value": 293008620022.67,
+    "last_record_keys": [
+     "date",
+     "totalBridgedToUSD",
+     "totalCirculating",
+     "totalCirculatingUSD",
+     "totalMintedUSD",
+     "totalUnreleased"
+    ]
+   },
+   "seconds_between": 900,
+   "last_point_timestamp_changed": false,
+   "last_point_value_changed": false,
+   "point_count_changed": false
+  },
+  "prices_current_bitcoin": {
+   "snap1": {
+    "at": "2026-11-09T17:26:10Z",
+    "server_date": "Mon, 09 Nov 2026 17:26:10 GMT",
+    "age": "18",
+    "price": 74743.07277945,
+    "point_ts": 1794245146,
+    "point_utc": "2026-11-09T17:25:46Z"
+   },
+   "snap2": {
+    "at": "2026-11-09T17:41:12Z",
+    "server_date": "Mon, 09 Nov 2026 17:41:12 GMT",
+    "age": "48",
+    "price": 74510.9012879,
+    "point_ts": 1794246021,
+    "point_utc": "2026-11-09T17:40:21Z"
+   },
+   "seconds_between": 900,
+   "last_point_timestamp_changed": true,
+   "last_point_value_changed": true,
+   "point_count_changed": null
+  }
+ },
+ "revision_test": {
+  "note": "Three observations of the SAME newest daily data point, same field, at three times. Age is the CDN cache age of that response in seconds.",
+  "observations": {
+   "historicalChainTvl_all": {
+    "field": "tvl",
+    "point_date": "2026-11-09T00:00:00Z",
+    "sequence": [
+     {
+      "label": "obs1 (initial probe)",
+      "served_at": "Mon, 09 Nov 2026 17:24:25 GMT",
+      "cdn_cache_age_s": "243",
+      "value": 79003625907
+     },
+     {
+      "label": "obs2 (reprobe snap1)",
+      "served_at": "Mon, 09 Nov 2026 17:26:10 GMT",
+      "cdn_cache_age_s": "1",
+      "value": 79021985782
+     },
+     {
+      "label": "obs3 (reprobe snap2)",
+      "served_at": "Mon, 09 Nov 2026 17:41:11 GMT",
+      "cdn_cache_age_s": "274",
+      "value": 79021985782
+     }
+    ],
+    "value_changed_obs1_to_obs2": true,
+    "delta_obs1_to_obs2": 18359875,
+    "delta_bps": 2.3239,
+    "value_changed_obs2_to_obs3": false
+   },
+   "historicalChainTvl_Ethereum": {
+    "field": "tvl",
+    "point_date": "2026-11-09T00:00:00Z",
+    "sequence": [
+     {
+      "label": "obs1 (initial probe)",
+      "served_at": "Mon, 09 Nov 2026 17:24:25 GMT",
+      "cdn_cache_age_s": "263",
+      "value": 41953070615
+     },
+     {
+      "label": "obs2 (reprobe snap1)",
+      "served_at": "Mon, 09 Nov 2026 17:26:10 GMT",
+      "cdn_cache_age_s": "41",
+      "value": 41972455634
+     },
+     {
+      "label": "obs3 (reprobe snap2)",
+      "served_at": "Mon, 09 Nov 2026 17:41:11 GMT",
+      "cdn_cache_age_s": null,
+      "value": 41972455634
+     }
+    ],
+    "value_changed_obs1_to_obs2": true,
+    "delta_obs1_to_obs2": 19385019,
+    "delta_bps": 4.6206,
+    "value_changed_obs2_to_obs3": false
+   },
+   "stablecoincharts_all": {
+    "field": "totalCirculatingUSD.peggedUSD",
+    "point_date": "2026-11-09T00:00:00Z",
+    "sequence": [
+     {
+      "label": "obs1 (initial probe)",
+      "served_at": "Mon, 09 Nov 2026 17:24:28 GMT",
+      "cdn_cache_age_s": "249",
+      "value": 293008620022.67
+     },
+     {
+      "label": "obs2 (reprobe snap1)",
+      "served_at": "Mon, 09 Nov 2026 17:26:10 GMT",
+      "cdn_cache_age_s": "39",
+      "value": 293008620022.67
+     },
+     {
+      "label": "obs3 (reprobe snap2)",
+      "served_at": "Mon, 09 Nov 2026 17:41:11 GMT",
+      "cdn_cache_age_s": "19",
+      "value": 293008620022.67
+     }
+    ],
+    "value_changed_obs1_to_obs2": false,
+    "delta_obs1_to_obs2": 0.0,
+    "delta_bps": 0,
+    "value_changed_obs2_to_obs3": false
+   },
+   "prices_current_bitcoin": {
+    "field": "price",
+    "note": "point-in-time, expected to move",
+    "sequence": [
+     {
+      "served_at": "Mon, 09 Nov 2026 17:26:10 GMT",
+      "point_utc": "2026-11-09T17:25:46Z",
+      "price": 74743.07277945
+     },
+     {
+      "served_at": "Mon, 09 Nov 2026 17:41:12 GMT",
+      "point_utc": "2026-11-09T17:40:21Z",
+      "price": 74510.9012879
+     }
+    ],
+    "value_changed": true,
+    "timestamp_changed": true
+   }
+  }
+ },
+ "structural_findings_all": {
+  "overview_dexs": {
+   "totalDataChart_len_after_exclude": 0,
+   "totalDataChartBreakdown_len": 4649,
+   "NOTE_excludeTotalDataChart_effect": "empties totalDataChart only; totalDataChartBreakdown is still returned in full, which is why the response is ~21 MB",
+   "breakdown_timestamp_field": "element[0], unix seconds UTC",
+   "breakdown_earliest_utc": "2014-02-17T00:00:00Z",
+   "breakdown_latest_utc": "2026-11-09T00:00:00Z",
+   "breakdown_points": 4649,
+   "breakdown_modal_step_seconds": 86400,
+   "breakdown_step_histogram": {
+    "86400": 4648
+   },
+   "breakdown_distinct_steps": 1,
+   "breakdown_value_shape": "element[1] = {chain: {protocol: usd_volume}}",
+   "breakdown_first_entry_chains": [
+    "Counterparty DEX"
+   ],
+   "breakdown_last_entry_chain_count": 1107,
+   "protocols_len": 1587,
+   "protocol_record_fields": [
+    "total24h",
+    "total48hto24h",
+    "totalLastFullDay",
+    "total7d",
+    "total14dto7d",
+    "total30d",
+    "total60dto30d",
+    "total1y",
+    "annualized1y",
+    "total7DaysAgo",
+    "total30DaysAgo",
+    "totalAllTime",
+    "average1y",
+    "monthlyAverage1y",
+    "change_1d",
+    "change_7d",
+    "change_1m",
+    "change_7dover7d",
+    "change_30dover30d",
+    "breakdown24h",
+    "breakdown30d",
+    "defillamaId",
+    "name",
+    "displayName",
+    "module",
+    "category",
+    "logo",
+    "chains",
+    "protocolType",
+    "methodologyURL",
+    "methodology",
+    "parentProtocol",
+    "slug",
+    "linkedProtocols",
+    "id"
+   ],
+   "allChains_len": 298,
+   "aggregate_fields_units": "total24h/total7d/total30d/total1y/totalAllTime/totalLastFullDay/total*Ago = USD volume; change_* = percent",
+   "CORRECTION": "an earlier automated scan mislabelled total24h/total7d/etc as unix timestamps; they are USD volume amounts, NOT timestamps"
+  },
+  "historicalChainTvl_all": {
+   "leading_zero_tvl_days": 138,
+   "first_nonzero_utc": "2018-02-12T00:00:00Z",
+   "total_zero_tvl_days": 138,
+   "tvl_units": "USD (absolute dollars, not millions)",
+   "date_type": "int",
+   "date_alignment": "all 00:00:00Z",
+   "latest_value": 79003625907,
+   "latest_utc": "2026-11-09T00:00:00Z"
+  },
+  "historicalChainTvl_Ethereum": {
+   "leading_zero_tvl_days": 138,
+   "first_nonzero_utc": "2018-02-12T00:00:00Z",
+   "total_zero_tvl_days": 138,
+   "tvl_units": "USD (absolute dollars, not millions)",
+   "date_type": "int",
+   "date_alignment": "all 00:00:00Z",
+   "latest_value": 41953070615,
+   "latest_utc": "2026-11-09T00:00:00Z"
+  },
+  "stablecoincharts_all": {
+   "date_type": "str",
+   "date_type_note": "date is a JSON STRING of unix seconds, unlike historicalChainTvl where it is an int",
+   "date_alignment": "all 00:00:00Z",
+   "top_level_record_keysets": {
+    "['date', 'totalCirculating', 'totalCirculatingUSD']": 476,
+    "['date', 'totalCirculating', 'totalCirculatingUSD', 'totalUnreleased']": 2791,
+    "['date', 'totalBridgedToUSD', 'totalCirculating', 'totalCirculatingUSD', 'totalMintedUSD', 'totalUnreleased']": 1
+   },
+   "peg_keys_first_record": [
+    "peggedUSD"
+   ],
+   "peg_keys_last_record": [
+    "peggedUSD",
+    "peggedVAR",
+    "peggedEUR",
+    "peggedJPY",
+    "peggedCNY",
+    "peggedUAH",
+    "peggedARS",
+    "peggedGBP",
+    "peggedCAD",
+    "peggedCHF",
+    "peggedAUD",
+    "peggedREAL",
+    "peggedRUB",
+    "peggedMXN",
+    "peggedSGD",
+    "peggedPHP",
+    "peggedTRY",
+    "peggedCOP",
+    "peggedKES",
+    "peggedZAR",
+    "peggedNGN",
+    "peggedXOF",
+    "peggedGHS",
+    "peggedCLP",
+    "peggedPEN",
+    "peggedMYR",
+    "peggedKRW",
+    "peggedHKD",
+    "peggedAED",
+    "peggedIDR"
+   ],
+   "peg_keys_union_over_series": [
+    "peggedAED",
+    "peggedARS",
+    "peggedAUD",
+    "peggedCAD",
+    "peggedCHF",
+    "peggedCLP",
+    "peggedCNY",
+    "peggedCOP",
+    "peggedEUR",
+    "peggedGBP",
+    "peggedGHS",
+    "peggedHKD",
+    "peggedIDR",
+    "peggedJPY",
+    "peggedKES",
+    "peggedKRW",
+    "peggedMXN",
+    "peggedMYR",
+    "peggedNGN",
+    "peggedPEN",
+    "peggedPHP",
+    "peggedREAL",
+    "peggedRUB",
+    "peggedSGD",
+    "peggedTRY",
+    "peggedUAH",
+    "peggedUSD",
+    "peggedVAR",
+    "peggedXOF",
+    "peggedZAR"
+   ],
+   "peg_key_count_first": 1,
+   "peg_key_count_last": 30,
+   "units": "totalCirculating[pegKey] = units of the pegged asset (e.g. peggedEUR is EUR); totalCirculatingUSD[pegKey] = USD value. Summing totalCirculating across pegs mixes currencies.",
+   "schema_warning": "the set of peg keys GROWS over the series; a parser that fixes columns from the first record will silently drop pegs"
+  }
+ }
+}

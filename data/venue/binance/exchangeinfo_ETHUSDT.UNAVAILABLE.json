@@ -1,0 +1,30 @@
+{
+ "requested_url": "https://api.binance.com/api/v3/exchangeInfo?symbol=ETHUSDT",
+ "attempted_at_utc": "2026-11-09T17:22:24Z",
+ "result": "UNAVAILABLE",
+ "attempts": [
+  {
+   "attempt": 1,
+   "http_status": 451,
+   "body": "{\n  \"code\": 0,\n  \"msg\": \"Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error.\"\n}"
+  },
+  {
+   "attempt": 2,
+   "http_status": 451,
+   "body": "{\n  \"code\": 0,\n  \"msg\": \"Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error.\"\n}"
+  },
+  {
+   "attempt": 3,
+   "http_status": 451,
+   "body": "{\n  \"code\": 0,\n  \"msg\": \"Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error.\"\n}"
+  }
+ ],
+ "fields_requested_but_NOT_obtained": [
+  "tickSize",
+  "stepSize",
+  "minNotional",
+  "status",
+  "orderTypes"
+ ],
+ "explanation": "api.binance.com responds HTTP 451 to every request from this container (Binance geo-restriction, not a network-policy denial). No instrument metadata was obtained. This file is an attempt record, NOT exchangeInfo data. Do not parse it as instrument metadata."
+}
