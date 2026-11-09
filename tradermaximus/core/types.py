@@ -281,6 +281,13 @@ class Position:
     #: drift detection and strategy validation both consume average R.
     initial_risk_per_unit: float = 0.0
     initial_quantity: float = 0.0
+    #: The regime that was active when this position opened.
+    #:
+    #: Recorded at entry because no exit path knew it. Every TradeRecord
+    #: therefore carried the "UNKNOWN" default, which made any gate measuring
+    #: "distinct regimes traded" unpassable by construction — it always read 1,
+    #: whatever the market had actually done.
+    entry_regime: str = "UNKNOWN"
 
     def __post_init__(self) -> None:
         if self.highest_price is None:

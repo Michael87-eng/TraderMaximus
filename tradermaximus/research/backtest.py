@@ -257,9 +257,19 @@ class Backtester:
         risk = RiskEngine(self.limits, journal=self.journal)
         regime_engine = RegimeEngine()
 
+        # The benchmark instrument must carry the UNIVERSE's asset class, not a
+        # hardcoded one. The regime engine selects its threshold profile from
+        # the features' asset class, and the features it classifies come from
+        # this series — so labelling the benchmark EQUITIES silently classified
+        # every crypto backtest on equity thresholds. A crypto regime
+        # recalibration had literally no effect on a crypto backtest until this
+        # line was fixed, and nothing reported an error.
+        benchmark_asset_class = next(
+            (i.asset_class for i in instruments.values()), AssetClass.EQUITIES
+        )
         benchmark_series = (
             CandleSeries.build(
-                Instrument("BENCHMARK", AssetClass.EQUITIES), timeframe, benchmark
+                Instrument("BENCHMARK", benchmark_asset_class), timeframe, benchmark
             )
             if benchmark
             else None
@@ -526,6 +536,9 @@ class Backtester:
             sector=instruments[symbol].sector,
             timestamp=now,
             commission=sum(f.commission for f in ack.fills),
+            # Carried so the closed TradeRecord reports the regime it was
+            # opened in. Without it every record read "UNKNOWN".
+            entry_regime=signal.regime,
         )
 
     def _manage_positions(

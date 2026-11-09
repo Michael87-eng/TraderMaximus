@@ -703,6 +703,62 @@ CRYPTO_DONCHIAN_MEDIUM = StrategySpec(
 )
 
 
+# ---------------------------------------------------------------------------
+# Task 3 — the benchmark, formalised as a gated candidate
+#
+# The 200-day MA trend-to-cash rule was used as a benchmark and it beat the
+# whole system: 16,583.8% against buy-and-hold BTC's 2,281.9%, Sharpe 1.69
+# against 0.91, max drawdown 35.7% against 83.2%, invested 57% of the time, in
+# 35 round trips over eight years.
+#
+# A benchmark that wins is not a benchmark, it is a candidate. So it goes
+# through the identical gate protocol on the identical data with the identical
+# cost model. If it clears the gates it becomes the baseline everything else
+# must beat; if it fails walk-forward, the in-sample benchmark figure does not
+# survive out of sample and the comparison changes.
+#
+# Deliberately specified with NO stop. The moving average IS the exit, and
+# adding an ATR stop would make it a different strategy whose result could not
+# be compared with the benchmark figure already reported. StopSpec carries a
+# 99% ceiling to express "no stop" without special-casing the risk engine,
+# which requires a positive stop distance; the real exit is the invalidation
+# condition below.
+# ---------------------------------------------------------------------------
+
+TREND_TO_CASH_200DMA = StrategySpec(
+    id="STRATEGY_014",
+    name="Trend to Cash (200-day MA)",
+    strategy_type="momentum",
+    side=Side.LONG,
+    asset_classes=CRYPTO_ONLY,
+    entry_conditions=(
+        price_above_feature("ma200", name="close_above_ma200"),
+    ),
+    invalidation_conditions=(
+        custom(
+            "close_below_ma200",
+            lambda ctx: (
+                (ma := ctx.features.number("ma200")) is not None
+                and ctx.features.close < ma,
+                f"close={ctx.features.close:.6g} vs ma200="
+                f"{ctx.features.number('ma200')}",
+            ),
+            "Exit to cash the moment price closes below the 200-day average.",
+        ),
+    ),
+    # No protective stop: the average is the exit. 0.99 is "effectively none"
+    # and is clamped by the asset class's own max_stop_pct in any case, which
+    # is itself a finding — see docs/CRYPTO_REGIME_RECALIBRATION.md.
+    stop=StopSpec(atr_multiplier=99.0, max_stop_pct=0.99, use_structure=False),
+    target_ladder="scale_out",
+    min_data_points=300,
+    max_holding_days=None,          # held until the average says otherwise
+    notes="Task 3. The benchmark as a candidate. PROVISIONAL RESEARCH DEFAULT; "
+          "the 200 window was NOT selected out of sample and that is the "
+          "principal reason to distrust the in-sample figure.",
+)
+
+
 ALL_STRATEGIES: tuple[StrategySpec, ...] = (
     MOMENTUM_BREAKOUT,
     PULLBACK_MA_BOUNCE,
@@ -717,6 +773,7 @@ ALL_STRATEGIES: tuple[StrategySpec, ...] = (
     FOREX_MEAN_REVERSION_SHORT,
     CRYPTO_TREND_MEDIUM,
     CRYPTO_DONCHIAN_MEDIUM,
+    TREND_TO_CASH_200DMA,
 )
 
 STRATEGIES_BY_ID: Mapping[str, StrategySpec] = {s.id: s for s in ALL_STRATEGIES}

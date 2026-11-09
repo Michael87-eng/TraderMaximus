@@ -282,6 +282,7 @@ class PositionBook:
         sector: str = "UNKNOWN",
         timestamp: datetime | None = None,
         commission: float = 0.0,
+        entry_regime: str = "UNKNOWN",
     ) -> Position:
         if symbol in self._positions:
             raise ValueError(f"position already open for {symbol}; scale in via add_to_position")
@@ -299,6 +300,7 @@ class PositionBook:
             stop_price=stop_price,
             targets=list(targets),
             sector=sector,
+            entry_regime=entry_regime,
         )
         self._positions[symbol] = position
         self._prices.setdefault(symbol, entry_price)
@@ -329,7 +331,7 @@ class PositionBook:
         timestamp: datetime | None = None,
         commission: float = 0.0,
         reason: str = "unspecified",
-        regime: str = "UNKNOWN",
+        regime: str | None = None,
     ) -> TradeRecord | None:
         """Close all or part of a position, returning a record when fully closed."""
         position = self._require(symbol)
@@ -363,7 +365,8 @@ class PositionBook:
             r_multiple=(position.realised_pnl / initial_risk) if initial_risk > 0 else 0.0,
             costs=commission,
             exit_reason=reason,
-            regime=regime,
+            # An exit rarely knows the regime; the position does, from entry.
+            regime=regime if regime is not None else position.entry_regime,
         )
         self.closed_trades.append(record)
         return record

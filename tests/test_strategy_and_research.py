@@ -41,18 +41,25 @@ class TestStrategyLibrary(unittest.TestCase):
         half is STRATEGY_011 rather than a side flag on STRATEGY_010 because
         the two have different entry conditions and are scored separately.
         """
-        self.assertEqual(len(ALL_STRATEGIES), 13)
-        self.assertEqual(len({s.id for s in ALL_STRATEGIES}), 13)
+        self.assertEqual(len(ALL_STRATEGIES), 14)
+        self.assertEqual(len({s.id for s in ALL_STRATEGIES}), 14)
         # STRATEGY_012 and _013 are crypto-native additions, not spec section
         # 6.2 strategies: the specified ten were all written for equities and
         # the three that merely permit crypto still carry an equity mental
         # model. These two are specified against crypto price behaviour only.
         from tradermaximus.strategy.library import CRYPTO_ONLY
         crypto_native = [s for s in ALL_STRATEGIES if s.asset_classes == CRYPTO_ONLY]
-        self.assertEqual({s.id for s in crypto_native}, {"STRATEGY_012", "STRATEGY_013"})
+        self.assertEqual({s.id for s in crypto_native}, {"STRATEGY_012", "STRATEGY_013", "STRATEGY_014"})
         for spec in crypto_native:
             self.assertTrue(spec.invalidation_conditions, f"{spec.id} states no exit rule")
-            self.assertIsNotNone(spec.max_holding_days, f"{spec.id} states no horizon")
+        # STRATEGY_014 deliberately has no time stop: the 200-day average is
+        # its only exit, and imposing a holding limit would make it a different
+        # strategy from the benchmark figure it exists to be compared against.
+        for spec in crypto_native:
+            if spec.id == "STRATEGY_014":
+                self.assertIsNone(spec.max_holding_days)
+            else:
+                self.assertIsNotNone(spec.max_holding_days, f"{spec.id} states no horizon")
         sides = {s.side for s in ALL_STRATEGIES}
         self.assertIn(Side.SHORT, sides, "the library must be able to trade short")
 

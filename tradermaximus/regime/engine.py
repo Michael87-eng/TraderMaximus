@@ -38,7 +38,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Mapping, Sequence
 
-from ..core.types import utc_now
+from ..core.types import AssetClass, utc_now
 from ..indicators import core as ind
 from ..indicators.engine import FeatureSet
 
@@ -169,6 +169,106 @@ class RegimeState:
 # Strategy eligibility (section 5.4)
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True, slots=True)
+class RegimeProfile:
+    """Per-asset-class regime thresholds.
+
+    Every threshold in the original classifier was a single global number
+    inherited from equity and FX work. Applied to crypto they mis-fired in two
+    measurable ways (Task 2a, `data/venue/crypto_distributions.json`):
+
+    * ``correction_drawdown`` fired at 8% below the rolling peak. Crypto's
+      *10th percentile* drawdown is 11.3% and its median is 43.7%, so 8% is
+      below anything the asset class normally does — and MARKET_CORRECTION
+      permits no new positions at all.
+    * ``trend_requires_calm`` demanded the instrument sit below its own 60th
+      volatility percentile to be classified as trending. Crypto trends
+      *happen* in high volatility; requiring calm first is requiring the trend
+      to look like an equity trend.
+
+    A profile makes those numbers asset-class data rather than constants, so
+    the equity path keeps its tested behaviour unchanged while crypto gets
+    thresholds derived from crypto.
+    """
+
+    name: str
+    #: Drawdown from the rolling peak that counts as a correction.
+    correction_drawdown: float
+    #: Whether a trend classification additionally requires low volatility.
+    trend_requires_calm: bool
+    #: Volatility percentile below which the instrument counts as "calm",
+    #: used only when ``trend_requires_calm`` is true.
+    calm_below_percentile: float
+    #: ADX below which RANGE may be asserted. RANGE requires POSITIVE
+    #: evidence; see `_classify`.
+    range_max_adx: float
+    #: ADX above which a directional reading is strong enough to assert.
+    trend_min_adx: float
+    #: Volatility percentiles for the HIGH / LOW volatility tags.
+    high_volatility_percentile: float
+    low_volatility_percentile: float
+    #: Take the directional reading from observable price inputs (close vs
+    #: MA200, ADX) rather than from the weighted composite score.
+    #:
+    #: Measured on 1,017 sampled BTC daily bars, the composite score occupies
+    #: [0.365, 0.826] at the 10th-99th percentile. Its TREND_DOWN cut is
+    #: score < 0.30, which **0.0% of bars reach** — across a span containing
+    #: both the 2018 and 2022 bear markets. The score is a bounded weighted
+    #: average of six normalised inputs, so it compresses toward the middle and
+    #: cannot express a downtrend at all. Reading direction from close-vs-MA200
+    #: and ADX is both expressible and, per section 5b, observable.
+    direction_from_observables: bool = False
+
+
+#: Equity / FX profile — the original constants, unchanged, so the previously
+#: validated behaviour of those paths is preserved exactly.
+DEFAULT_PROFILE = RegimeProfile(
+    name="default",
+    correction_drawdown=0.08,
+    trend_requires_calm=True,
+    calm_below_percentile=0.60,
+    range_max_adx=float("inf"),      # original RANGE was a residual, not evidence
+    trend_min_adx=0.0,
+    high_volatility_percentile=0.75,
+    low_volatility_percentile=0.25,
+    direction_from_observables=False,
+)
+
+#: Crypto profile, derived from measured BTC/ETH daily distributions.
+#: Basis for each number is in `docs/CRYPTO_REGIME_RECALIBRATION.md`.
+CRYPTO_PROFILE = RegimeProfile(
+    name="crypto",
+    # p75 of drawdown-from-peak, pooled BTC/ETH = 58.9%. A crypto drawdown only
+    # counts as a correction once it is worse than three quarters of all the
+    # drawdowns the asset class has produced.
+    correction_drawdown=0.589,
+    # Crypto trends in high volatility. Requiring calm first is the single
+    # change that unblocks trend-following, and it removes a requirement rather
+    # than loosening a limit: nothing about position size or risk changes.
+    trend_requires_calm=False,
+    calm_below_percentile=0.60,
+    # p25 of ADX(14), pooled = 20.9. RANGE must be asserted from low ADX, not
+    # inherited by default.
+    range_max_adx=20.9,
+    # p50 of ADX(14), pooled = 27.2.
+    trend_min_adx=27.2,
+    high_volatility_percentile=0.75,
+    low_volatility_percentile=0.25,
+    direction_from_observables=True,
+)
+
+PROFILES: Mapping[AssetClass, RegimeProfile] = {
+    AssetClass.CRYPTO: CRYPTO_PROFILE,
+}
+
+
+def profile_for(asset_class: AssetClass | None) -> RegimeProfile:
+    """The regime profile for an asset class, defaulting to the original."""
+    if asset_class is None:
+        return DEFAULT_PROFILE
+    return PROFILES.get(asset_class, DEFAULT_PROFILE)
+
+
 ALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
     # Section 5.4 states TREND_UP's disallowed set as "Reversal, Gap (except
     # gap-up), Mean Reversion". The parenthetical carves gap-up *out* of the
@@ -202,7 +302,12 @@ DISALLOWED_STRATEGY_TYPES: Mapping[Regime, frozenset[str]] = {
     # REGIME_FAMILY_SIZE_MULTIPLIER). Reversal keeps its trend veto.
     Regime.TREND_UP: frozenset({"reversal"}),
     Regime.TREND_DOWN: frozenset({"momentum", "breakout", "can_slim", "pullback", "gap", "institutional"}),
-    Regime.RANGE: frozenset({"momentum", "breakout", "can_slim"}),
+    # `breakout` removed: a breakout is the event that ENDS a range, so
+    # forbidding it inside one forbids the canonical setup. The entry
+    # condition supplies the evidence — STRATEGY_013 requires a close above
+    # the 20-bar high, which cannot be true while the range holds. `momentum`
+    # stays vetoed: trend continuation needs a trend to continue.
+    Regime.RANGE: frozenset({"momentum", "can_slim"}),
     Regime.HIGH_VOLATILITY: frozenset({"breakout", "momentum", "can_slim", "gap"}),
     Regime.LOW_VOLATILITY: frozenset(),
     Regime.VOLATILITY_EXPANSION: frozenset({"breakout", "can_slim", "gap"}),
@@ -289,6 +394,14 @@ REGIME_FAMILY_SIZE_MULTIPLIER: Mapping[tuple[Regime, str], float] = {
     (Regime.HIGH_VOLATILITY, "reversal"): 0.5,
     (Regime.VOLATILITY_EXPANSION, "mean_reversion"): 0.5,
     (Regime.VOLATILITY_EXPANSION, "reversal"): 0.5,
+    # Trend families in a volatile regime used to be VETOED. The veto moved to
+    # the volatility axis, which no longer blocks, so the protection has to
+    # live here instead or it would simply have been deleted. Half size in a
+    # high-volatility or expanding regime: the strategy may trade, smaller.
+    (Regime.HIGH_VOLATILITY, "momentum"): 0.5,
+    (Regime.HIGH_VOLATILITY, "breakout"): 0.5,
+    (Regime.VOLATILITY_EXPANSION, "momentum"): 0.5,
+    (Regime.VOLATILITY_EXPANSION, "breakout"): 0.5,
 }
 
 
@@ -390,27 +503,71 @@ def family_size_multiplier(strategy_type: str, state: RegimeState) -> float:
     return min(multipliers) if multipliers else 1.0
 
 
+#: The three axes the original classifier collapsed into one label (Task 2d).
+#:
+#: A bar can be TREND_UP *and* HIGH_VOLATILITY at once, and those two readings
+#: should not have the same authority. Separating them is what lets the
+#: eligibility matrix keep its real protection — no trend-following into a
+#: genuine downtrend — while dropping the mis-specification that vetoed
+#: trend-following in ordinary crypto conditions.
+DIRECTIONAL_REGIMES: frozenset[Regime] = frozenset({
+    Regime.TREND_UP, Regime.TREND_DOWN, Regime.RANGE,
+    Regime.BULL_MARKET, Regime.BEAR_MARKET,
+})
+
+VOLATILITY_REGIMES: frozenset[Regime] = frozenset({
+    Regime.HIGH_VOLATILITY, Regime.LOW_VOLATILITY,
+    Regime.VOLATILITY_EXPANSION, Regime.VOLATILITY_COMPRESSION,
+})
+
+OVERRIDE_REGIMES: frozenset[Regime] = frozenset({
+    Regime.MARKET_CORRECTION, Regime.EVENT_DRIVEN,
+    Regime.LIQUIDITY_STRESS, Regime.UNKNOWN,
+})
+
+
 def is_strategy_type_allowed(strategy_type: str, state: RegimeState) -> tuple[bool, str]:
     """Check a strategy family against every active regime.
 
     The two directions are deliberately asymmetric, and both are conservative:
 
-    * A **veto** from *any* active regime blocks the strategy. This is what
-      makes a ``TREND_UP`` market that is also ``HIGH_VOLATILITY`` refuse
-      breakouts — the risk reading wins over the trend reading.
+    * A **veto** from any active DIRECTIONAL or OVERRIDE regime blocks the
+      strategy. That is the protection worth keeping: no trend-following into
+      a genuine downtrend, and no trading at all through a correction, an
+      event or a liquidity stress.
+    * A **veto from the VOLATILITY axis does not block.** It reduces size
+      instead — see :func:`family_size_multiplier`.
     * A **permission** may come from the primary regime *or* any active tag.
+
+    Why volatility no longer vetoes, measured rather than argued. The original
+    rule was "a ``TREND_UP`` market that is also ``HIGH_VOLATILITY`` refuses
+    breakouts: the risk reading wins over the trend reading". On equities that
+    is sound. On crypto it is circular: ``HIGH_VOLATILITY`` is a *self-relative
+    percentile*, so by construction a quarter of all bars carry the tag
+    whatever the asset is actually doing, and crypto's trends happen in
+    precisely those bars. Combined with RANGE being the residual, this vetoed
+    momentum and breakout on 67.66% of crypto bars before a single entry
+    condition was tested.
+
+    Dropping the volatility veto is not a relaxation of risk. The exposure a
+    strategy takes in a volatile regime is still cut — by
+    ``REGIME_FAMILY_SIZE_MULTIPLIER``, which applies to the size rather than
+    the permission — and every hard risk limit is untouched. The protection
+    changes form from prohibition to sizing, which is what it should have been
+    for an asset class whose normal state is volatile.
 
     Permission was originally taken from the primary regime alone, which made
     the two directions inconsistent: a strategy permitted by an active
     ``BULL_MARKET`` backdrop was still blocked because the primary ``TREND_UP``
-    label happened not to list it. Since a veto from any regime still
-    overrides, widening permission to the union cannot authorise anything an
-    active regime objects to.
+    label happened not to list it.
     """
     if not state.is_tradeable:
         return False, f"regime {state.primary.value} permits no trading"
 
     for regime in sorted(state.all_regimes, key=lambda r: r.value):
+        if regime in VOLATILITY_REGIMES:
+            # Handled by size, not by permission. See the docstring.
+            continue
         if strategy_type in DISALLOWED_STRATEGY_TYPES.get(regime, frozenset()):
             return False, f"strategy type {strategy_type!r} is disallowed in {regime.value}"
 
@@ -450,8 +607,17 @@ def minimum_score(state: RegimeState) -> float | None:
 class RegimeEngine:
     """Computes the weighted regime score and classifies it."""
 
-    def __init__(self, *, min_confidence: float = 0.70) -> None:
+    def __init__(
+        self,
+        *,
+        min_confidence: float = 0.70,
+        profile: RegimeProfile | None = None,
+    ) -> None:
         self.min_confidence = min_confidence
+        # None means "pick the profile from each instrument's asset class".
+        # An explicit profile overrides that, for tests and for comparing the
+        # before-and-after of a recalibration on identical data.
+        self.profile = profile
         self._previous: RegimeState | None = None
 
     def classify(
@@ -473,7 +639,13 @@ class RegimeEngine:
         raw, components, missing = self._score_components(features, context)
         score = round(sum(components.values()), 6)
         confidence = self._confidence(features, context, missing, score)
-        primary, tags, notes = self._classify(score, raw, features, context, benchmark_closes)
+        # The profile is chosen from the instrument's own asset class, so a
+        # crypto series is classified on crypto thresholds and an equity series
+        # keeps the thresholds its validation was run against.
+        profile = self.profile or profile_for(getattr(features, "asset_class", None))
+        primary, tags, notes = self._classify(
+            score, raw, features, context, benchmark_closes, profile
+        )
 
         state = RegimeState(
             primary=primary,
@@ -602,15 +774,16 @@ class RegimeEngine:
         features: FeatureSet,
         context: MarketContext,
         benchmark_closes: Sequence[float] | None,
+        profile: RegimeProfile = DEFAULT_PROFILE,
     ) -> tuple[Regime, set[Regime], list[str]]:
         tags: set[Regime] = set()
         notes: list[str] = []
         vol_pct = raw.get("volatility_percentile") or 0.5
 
         # -- volatility tags (concurrent with any trend regime) --------------
-        if vol_pct > 0.75:
+        if vol_pct > profile.high_volatility_percentile:
             tags.add(Regime.HIGH_VOLATILITY)
-        if vol_pct < 0.25:
+        if vol_pct < profile.low_volatility_percentile:
             tags.add(Regime.LOW_VOLATILITY)
 
         spike = context.volatility_spike
@@ -647,28 +820,84 @@ class RegimeEngine:
         drawdown = context.index_drawdown
         if drawdown is None and benchmark_closes:
             drawdown = _drawdown_from_peak(benchmark_closes)
-        if drawdown is not None and drawdown > 0.08 and score < 0.4:
-            notes.append(f"benchmark {drawdown:.1%} below peak")
+        if (
+            drawdown is not None
+            and drawdown > profile.correction_drawdown
+            and score < 0.4
+        ):
+            notes.append(
+                f"benchmark {drawdown:.1%} below peak "
+                f"(>{profile.correction_drawdown:.1%} on the {profile.name} profile)"
+            )
             return Regime.MARKET_CORRECTION, tags, notes
 
         if Regime.BEAR_MARKET in tags:
             return Regime.BEAR_MARKET, tags, notes
 
-        # -- primary trend classification (section 5.2) ----------------------
+        # -- primary directional classification ------------------------------
+        #
+        # Three changes from the original, all structural rather than numeric.
+        #
+        # 1. RANGE requires POSITIVE EVIDENCE. It used to be the residual: any
+        #    bar that matched nothing else became RANGE, and RANGE forbids
+        #    momentum, breakout and CAN SLIM. Measured on crypto that made RANGE
+        #    37.25% of all bars and vetoed trend-following on 67.66% of them —
+        #    a default classification silently forbidding the single
+        #    best-documented crypto effect. RANGE now needs low ADX.
+        #
+        # 2. UNKNOWN is the residual. A bar that fits nothing is not traded,
+        #    which is the conservative outcome, but it does not single out
+        #    trend strategies for a veto the way a RANGE default did.
+        #
+        # 3. Volatility is a TAG, never the primary. HIGH_VOLATILITY used to be
+        #    able to become the primary regime and thereby veto momentum. For
+        #    crypto that is backwards: high volatility is the normal condition
+        #    and is where trends occur. It stays concurrent with the direction.
         breadth = raw.get("breadth_index") or 0.0
-        calm = vol_pct < 0.60
+        adx = features.number("adx_14")
+        calm = (
+            vol_pct < profile.calm_below_percentile
+            if profile.trend_requires_calm
+            else True
+        )
+        strong = adx is None or adx >= profile.trend_min_adx
+        ranging = adx is not None and adx <= profile.range_max_adx
 
-        if score > 0.70 and calm and breadth >= 0.0:
+        if profile.direction_from_observables:
+            # Direction from price, not from the composite. ADX supplies the
+            # strength and close-vs-MA200 the sign; neither is compressed the
+            # way the weighted score is.
+            ma200 = features.number("ma200")
+            above = ma200 is not None and features.close > ma200
+            below = ma200 is not None and features.close < ma200
+            if ma200 is None:
+                primary = Regime.UNKNOWN
+                notes.append("MA200 unavailable; no direction asserted, not traded")
+            elif strong and above:
+                primary = Regime.TREND_UP
+                notes.append(f"trend up: close above MA200, ADX {adx:.1f}")
+            elif strong and below:
+                primary = Regime.TREND_DOWN
+                notes.append(f"trend down: close below MA200, ADX {adx:.1f}")
+            elif ranging:
+                primary = Regime.RANGE
+                notes.append(f"range asserted from ADX {adx:.1f} <= {profile.range_max_adx:.1f}")
+            else:
+                primary = Regime.UNKNOWN
+                notes.append(
+                    f"ADX {adx:.1f} is between the range ceiling "
+                    f"{profile.range_max_adx:.1f} and the trend floor "
+                    f"{profile.trend_min_adx:.1f}; not traded"
+                )
+        elif score > 0.70 and calm and breadth >= 0.0 and strong:
             primary = Regime.TREND_UP
-        elif score < 0.30 and calm and breadth < 0.5:
+        elif score < 0.30 and calm and breadth < 0.5 and strong:
             primary = Regime.TREND_DOWN
-        elif 0.30 <= score <= 0.70 and calm:
+        elif ranging and 0.30 <= score <= 0.70:
             primary = Regime.RANGE
-        elif Regime.HIGH_VOLATILITY in tags:
-            primary = Regime.HIGH_VOLATILITY
-        elif score > 0.70:
+        elif score > 0.70 and strong:
             primary = Regime.TREND_UP
-        elif score < 0.30:
+        elif score < 0.30 and strong:
             primary = Regime.TREND_DOWN
         else:
             primary = Regime.RANGE
