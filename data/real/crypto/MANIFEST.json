@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-11-09T16:50:05.706054+00:00",
+  "provider": "Alpha Vantage DIGITAL_CURRENCY_DAILY (market=USD)",
+  "provider_class": "AGGREGATED REFERENCE FEED - not execution-venue data",
+  "basis_risk": "Prices are a cross-venue composite. Fill assumptions derived from this feed are NOT venue-accurate. Venue data (Binance/Kraken) is refused by this session's network policy.",
+  "commit": "9a42e3c4e0a0937f3abe2b63960ce940d6351bd0",
+  "symbols": {
+    "BTC-USD": {
+      "sha256": "d8e0b832614ce80c83028790966fd9b3b4268fa5be0da1496cfb3a2e5d04cddb",
+      "bytes": 503685,
+      "rows": 5960,
+      "first_bar": "2010-07-17",
+      "last_bar": "2026-11-09",
+      "duplicate_timestamps": 0,
+      "zero_volume_bars": 1259
+    },
+    "ETH-USD": {
+      "sha256": "eb375f4495e06698069985c9684c6c5e83b0e8d36b26f0183edd7c5dc3ff9645",
+      "bytes": 347025,
+      "rows": 4112,
+      "first_bar": "2015-08-08",
+      "last_bar": "2026-11-09",
+      "duplicate_timestamps": 0,
+      "zero_volume_bars": 0
+    }
+  }
+}
