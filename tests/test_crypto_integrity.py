@@ -136,3 +136,76 @@ class TestRiskLimitPrecedence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBadTickDiscrimination(unittest.TestCase):
+    """A bad tick has no volume behind it. A panic is the heaviest bar there is.
+
+    Reversion alone was the test, and it is resolution-dependent: calibrated on
+    daily bars where a real crash persists, it rejected both BTCUSDT and
+    ETHUSDT hourly on the SAME bar — 2017-09-05T01:00Z, the day after China's
+    ICO ban — because at hourly resolution a real panic V-bounces inside one
+    bar. Two independent instruments do not suffer the same corrupt print in
+    the same hour.
+    """
+
+    from tradermaximus.data.quality import DataQualityEngine as _E
+
+    @staticmethod
+    def _moves(closes):
+        return [(b - a) / a for a, b in zip(closes, closes[1:]) if a > 0]
+
+    def test_a_volume_corroborated_crash_is_not_a_bad_tick(self) -> None:
+        """The real case, with the measured shape: fall, bounce, heavy volume."""
+        closes = [100.0] * 30 + [100.0, 90.5, 101.3] + [100.0] * 30
+        volumes = [36.0] * 30 + [36.0, 99.0, 54.0] + [36.0] * 30
+        index = 30  # the move INTO the 90.5 bar
+        self.assertTrue(
+            self._E._reverts_immediately(self._moves(closes), index),
+            "reversion alone still sees a bad tick — that is the old behaviour",
+        )
+        self.assertFalse(
+            self._E._reverts_immediately(self._moves(closes), index, volumes=volumes),
+            "volume 2.75x the median must veto the bad-tick verdict",
+        )
+
+    def test_a_volumeless_spike_is_still_a_bad_tick(self) -> None:
+        """The fix must not blind the engine to actual corruption."""
+        closes = [100.0] * 30 + [100.0, 90.5, 101.3] + [100.0] * 30
+        volumes = [36.0] * 30 + [36.0, 30.0, 36.0] + [36.0] * 30
+        self.assertTrue(
+            self._E._reverts_immediately(self._moves(closes), 30, volumes=volumes),
+            "a reverting move on BELOW-median volume is exactly a bad tick",
+        )
+
+    def test_a_persistent_crash_is_never_a_bad_tick(self) -> None:
+        """The 2020-03-12 case the original heuristic was written for."""
+        closes = [100.0] * 30 + [100.0, 60.0] + [61.0] * 30
+        volumes = [36.0] * 30 + [36.0, 200.0] + [40.0] * 30
+        for vols in (None, volumes):
+            self.assertFalse(
+                self._E._reverts_immediately(self._moves(closes), 30, volumes=vols),
+                "a crash that does not revert must never be flagged",
+            )
+
+    def test_the_real_venue_bars_load_clean(self) -> None:
+        """End to end on the actual data, if it is present."""
+        from pathlib import Path
+        from tradermaximus.core.types import Instrument, Timeframe
+        from tradermaximus.data.csv_loader import load_series
+        venue = Path(__file__).resolve().parents[1] / "data/venue/binance"
+        if not venue.exists():
+            self.skipTest("venue data not present in this checkout")
+        for name, timeframe in (("1h", Timeframe.H1), ("1d", Timeframe.D1)):
+            for symbol in ("BTCUSDT", "ETHUSDT"):
+                path = venue / f"{symbol}_{name}.csv"
+                if not path.exists():
+                    continue
+                with self.subTest(symbol=symbol, interval=name):
+                    instrument = Instrument(
+                        symbol, AssetClass.CRYPTO, "BINANCE", "crypto", 0.01, 1e-8, 1e-8
+                    )
+                    result = load_series(
+                        path, instrument, timeframe=timeframe, min_history=100
+                    )
+                    self.assertTrue(result.usable, result.summary())

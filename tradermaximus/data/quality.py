@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import statistics
 from typing import Mapping, Sequence
 
 from ..core.types import AssetClass, Candle, Quote, utc_now
@@ -278,14 +279,59 @@ class DataQualityEngine:
         return findings
 
     @staticmethod
-    def _reverts_immediately(moves: Sequence[float], index: int, tolerance: float = 0.35) -> bool:
-        """Whether a large move is undone by the very next bar.
+    def _volume_corroborates(volumes: Sequence[float], index: int,
+                             *, window: int = 50, multiple: float = 1.5) -> bool:
+        """Whether the bar carried unusual volume, i.e. real trading.
 
-        This is what separates a bad tick from real market history. A corrupt
-        print spikes and snaps back; a genuine crash persists. Bitcoin fell 40%
-        on 2020-03-12 and stayed down — treating that as a data error would
-        reject the single most informative stretch of crypto history there is,
-        which is precisely the stretch a risk system most needs to be tested on.
+        This is the discriminator that reversion alone cannot provide. A
+        corrupt print is a price with nothing behind it: one venue's bad quote,
+        a feed glitch, a fat finger. A genuine panic is the opposite — it is
+        the highest-volume bar in its neighbourhood, because that is what
+        panic *is*.
+
+        Compared against the median of the surrounding window rather than the
+        mean, so one neighbouring spike cannot mask the bar being tested.
+        """
+        if index >= len(volumes):
+            return False
+        subject = volumes[index]
+        if subject <= 0:
+            return False
+        low = max(0, index - window // 2)
+        neighbourhood = [
+            v for i, v in enumerate(volumes[low:low + window], start=low)
+            if i != index and v > 0
+        ]
+        if len(neighbourhood) < 10:
+            return False
+        return subject > statistics.median(neighbourhood) * multiple
+
+    @classmethod
+    def _reverts_immediately(cls, moves: Sequence[float], index: int,
+                             tolerance: float = 0.35,
+                             volumes: Sequence[float] | None = None) -> bool:
+        """Whether a large move is a bad tick rather than real market history.
+
+        A corrupt print spikes and snaps back; a genuine crash persists.
+        Bitcoin fell 40% on 2020-03-12 and stayed down — treating that as a
+        data error would reject the single most informative stretch of crypto
+        history there is, which is precisely the stretch a risk system most
+        needs to be tested on.
+
+        **Reversion alone is resolution-dependent, and relying on it was a
+        defect.** It was calibrated on daily bars, where a real crash persists
+        into the next day. At hourly resolution a real panic routinely
+        V-bounces inside one bar, so "reverted" stops discriminating. Measured:
+        both BTCUSDT and ETHUSDT hourly were rejected at quality 0.65 on the
+        *same* bar index — 2017-09-05T01:00Z, the day after China's ICO ban.
+        BTC fell 9.5% and bounced 12.0%; ETH fell 11.8% and bounced 13.7%. Two
+        independent instruments do not suffer the same corrupt print in the
+        same hour.
+
+        So reversion is now necessary but not sufficient: the move must also
+        lack volume corroboration. On those bars volume was 2.7x and 3.7x the
+        window median respectively — the heaviest trading in the neighbourhood,
+        which is evidence *for* a real move and against a bad print.
         """
         if index + 1 >= len(moves):
             return False
@@ -294,7 +340,12 @@ class DataQualityEngine:
         implied_recovery = (1.0 / (1.0 + moves[index])) - 1.0 if moves[index] > -1 else 0.0
         if implied_recovery == 0:
             return False
-        return abs(forward - implied_recovery) / abs(implied_recovery) < tolerance
+        if abs(forward - implied_recovery) / abs(implied_recovery) >= tolerance:
+            return False
+        # `moves` is diffs of closes, so moves[i] is the move INTO bar i+1.
+        if volumes is not None and cls._volume_corroborates(volumes, index + 1):
+            return False
+        return True
 
     def _check_outliers(
         self, series: CandleSeries, *, prices_adjusted: bool = False
@@ -346,7 +397,7 @@ class DataQualityEngine:
                 )
                 break
             if stdev > 0 and abs(move - mean) > self.outlier_sigma * stdev:
-                if self._reverts_immediately(moves, index):
+                if self._reverts_immediately(moves, index, volumes=series.volumes):
                     findings.append(
                         QualityFinding(
                             QualityIssue.PRICE_OUTLIER,
