@@ -65,7 +65,21 @@ class PaperFillModel:
     impact_coefficient_bps: float = 120.0
     #: Fraction of a bar's volume an order may consume before it fills partly.
     max_participation: float = 0.10
-    commission_bps: float = 1.0
+    #: Taker fee in basis points, charged on a marketable order.
+    #:
+    #: The previous single `commission_bps` defaulted to 1.0 — the right order
+    #: of magnitude for equities and 10x too low for crypto spot, where the
+    #: Binance VIP-0 and Kraken tier-0 taker fee is 10 bps. Every crypto
+    #: backtest run at the old default understated cost by roughly 18 bps per
+    #: round trip; at 30 round trips a year that is about 5.4% of annual return
+    #: never charged. The default is now crypto-correct, and asset classes with
+    #: cheaper execution must say so explicitly rather than inherit it.
+    taker_fee_bps: float = 10.0
+    #: Maker fee, charged when an order rests and is filled passively. Kept
+    #: separate because they are genuinely different numbers (Kraken tier 0 is
+    #: 26 bps taker / 16 bps maker) and a model that reports one figure cannot
+    #: show which the strategy actually paid.
+    maker_fee_bps: float = 5.0
     latency_ms: float = 45.0
     latency_jitter_ms: float = 20.0
     #: Probability the venue rejects an otherwise-valid order.
@@ -77,6 +91,17 @@ class PaperFillModel:
     #: and without it a backtest can quietly run on imaginary capital and
     #: report returns that were never achievable.
     enforce_buying_power: bool = True
+
+    @property
+    def commission_bps(self) -> float:
+        """Deprecated alias. Resolves to the taker fee.
+
+        Kept so that a caller still setting `commission_bps` fails loudly at
+        construction rather than being silently ignored — a cost model that
+        quietly drops a configured fee is exactly the class of error that let
+        an 18-bps-per-round-trip understatement survive.
+        """
+        return self.taker_fee_bps
 
 
 class PaperBroker(BrokerAdapter):
@@ -295,7 +320,12 @@ class PaperBroker(BrokerAdapter):
 
         # Slippage is measured against the mid, so the spread shows up in it.
         slippage_bps = abs(fill_price - quote.mid) / quote.mid * 10_000.0 if quote.mid > 0 else 0.0
-        commission = filled_quantity * fill_price * self.model.commission_bps / 10_000.0
+        # Every simulated fill here is marketable (the model has no resting
+        # book), so the taker fee applies. Maker is carried on the model and
+        # reported so that a future passive-fill path charges the right one
+        # rather than silently reusing taker.
+        fee_bps = self.model.taker_fee_bps
+        commission = filled_quantity * fill_price * fee_bps / 10_000.0
 
         fill = Fill(
             order_id=order.order_id,

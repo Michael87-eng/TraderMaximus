@@ -68,10 +68,15 @@ DEFAULT_MAX_HOLDING_DAYS = 60
 class BacktestConfig:
     starting_equity: float = 100_000.0
     warmup_bars: int = 250
-    commission_bps: float = 1.0
-    #: Quoted spread handed to the score's liquidity component, in basis
-    #: points. Matches the paper broker's MarketState default.
-    spread_bps: float = 5.0
+    #: Taker fee in bps per side. Default is crypto spot (Binance VIP-0 /
+    #: Kraken tier-0 taker = 10 bps). The old default of 1.0 understated
+    #: crypto cost by ~18 bps per round trip; see PaperFillModel.
+    taker_fee_bps: float = 10.0
+    #: Maker fee in bps per side, reported separately from taker.
+    maker_fee_bps: float = 5.0
+    #: Quoted spread, in basis points, charged on entry and exit and handed to
+    #: the score's liquidity component. 2 bps is pessimistic for BTC/ETH spot.
+    spread_bps: float = 2.0
     impact_coefficient_bps: float = 120.0
     partial_fill_probability: float = 0.0
     random_slippage_bps: float = 2.0
@@ -239,7 +244,8 @@ class Backtester:
         broker = PaperBroker(
             starting_cash=cfg.starting_equity,
             model=PaperFillModel(
-                commission_bps=cfg.commission_bps,
+                taker_fee_bps=cfg.taker_fee_bps,
+                maker_fee_bps=cfg.maker_fee_bps,
                 impact_coefficient_bps=cfg.impact_coefficient_bps,
                 partial_fill_probability=cfg.partial_fill_probability,
                 random_slippage_bps=cfg.random_slippage_bps,

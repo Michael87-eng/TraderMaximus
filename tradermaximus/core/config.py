@@ -241,7 +241,8 @@ DEFAULT_EXECUTION: dict[str, Any] = {
     "max_slippage_bps": 30.0,
     "max_order_size": 0.10,
     "latency_tolerance_ms": 2000,
-    "commission_bps": 1.0,
+    "taker_fee_bps": 10.0,
+    "maker_fee_bps": 5.0,
     "max_order_retries": 3,
 }
 

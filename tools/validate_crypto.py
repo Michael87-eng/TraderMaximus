@@ -185,7 +185,7 @@ def run_segment(name: str, universe: dict, bench: list[Candle], *,
     try:
         result = Backtester(BacktestConfig(
             starting_equity=100_000.0, warmup_bars=warmup, seed=7,
-            periods_per_year=ppy, commission_bps=FEE_BPS_PER_SIDE,
+            periods_per_year=ppy, taker_fee_bps=FEE_BPS_PER_SIDE,
             spread_bps=SPREAD_BPS, random_slippage_bps=SLIPPAGE_BPS,
             max_positions=3,
         )).run(universe, timeframe=timeframe, benchmark=bench,
