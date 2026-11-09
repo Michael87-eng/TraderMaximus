@@ -114,16 +114,26 @@ def rebalanced_mix(series: dict[str, list[Candle]], every: int = 30) -> dict:
 
 
 def ma_trend_to_cash(candles: list[Candle], window: int = 200) -> dict:
-    """Long when close > SMA(window), else cash. Each switch charged."""
+    """Long when close > SMA(window), else cash. Each switch charged.
+
+    ``switches`` is returned and reported, because without it this benchmark
+    can produce a number that looks like a result and is an artifact. Measured
+    on hourly bars with a 200-*hour* window it returned 1.2e9 x: selectively
+    compounding ~40,000 hourly returns while skipping the unheld hours
+    explodes, and the rule it describes is unimplementable at that turnover
+    whatever the fee model says. Judge this benchmark by its switch count and
+    its implied per-round-trip edge, not by its terminal equity.
+    """
     closes = [c.close for c in candles]
     cost = (FEE_BPS_PER_SIDE + SPREAD_BPS) / 10_000.0
-    equity, invested, held = 1.0, 0, False
+    equity, invested, held, switches = 1.0, 0, False, 0
     curve = [1.0]
     for i in range(window, len(closes)):
         want = closes[i] > statistics.fmean(closes[i - window:i])
         if want != held:
             equity *= (1.0 - cost)
             held = want
+            switches += 1
         if held:
             equity *= closes[i] / closes[i - 1]
             invested += 1
@@ -131,7 +141,8 @@ def ma_trend_to_cash(candles: list[Candle], window: int = 200) -> dict:
     rets = [b / a - 1.0 for a, b in zip(curve, curve[1:]) if a > 0]
     span = max(1, len(closes) - window)
     return {"return": curve[-1] - 1.0, "max_dd": max_drawdown(curve),
-            "rets": rets, "time_invested": invested / span}
+            "rets": rets, "time_invested": invested / span,
+            "switches": switches, "round_trips": switches / 2.0}
 
 
 def sharpe(rets: list[float], ppy: int) -> float:
@@ -221,17 +232,22 @@ def main() -> int:
 
     # --- benchmarks ---------------------------------------------------------
     print(f"\n  BENCHMARKS over the {label} span")
-    print(f"  {'benchmark':34}{'return':>11}{'Sharpe':>9}{'max DD':>9}{'invested':>10}")
+    print(f"  {'benchmark':34}{'return':>13}{'Sharpe':>8}{'max DD':>8}{'inv':>6}{'round trips':>12}")
     marks = {
         "B2 buy-and-hold BTC": buy_and_hold(source["BTCUSDT"]),
         "B3 buy-and-hold ETH": buy_and_hold(source["ETHUSDT"]),
         "B4 50/50 monthly rebalance": rebalanced_mix(source),
         "B5 BTC 200-bar MA to cash": ma_trend_to_cash(source["BTCUSDT"]),
     }
-    print(f"  {'B1 cash (USD)':34}{0.0:>10.1%}{0.0:>9.2f}{0.0:>9.1%}{0.0:>10.0%}")
+    def fmt_return(x: float) -> str:
+        return f"{x:>12.1%}" if abs(x) < 1_000 else f"{1.0 + x:>11.3g}x"
+
+    print(f"  {'B1 cash (USD)':34}{fmt_return(0.0)}{0.0:>8.2f}{0.0:>8.1%}{0.0:>6.0%}{0:>12}")
     for name, m in marks.items():
-        print(f"  {name:34}{m['return']:>10.1%}{sharpe(m['rets'], ppy):>9.2f}"
-              f"{m['max_dd']:>9.1%}{m['time_invested']:>10.0%}")
+        rt = m.get("round_trips")
+        print(f"  {name:34}{fmt_return(m['return'])}{sharpe(m['rets'], ppy):>8.2f}"
+              f"{m['max_dd']:>8.1%}{m['time_invested']:>6.0%}"
+              f"{(f'{rt:,.0f}' if rt is not None else '1'):>12}")
     best_bench_sharpe = max(sharpe(m["rets"], ppy) for m in marks.values())
 
     # --- folds -------------------------------------------------------------
@@ -314,8 +330,36 @@ def main() -> int:
         print(f"  {name:36}{'PASS' if ok else 'FAIL':>9}   {detail}")
 
     passed = all(ok for _, ok, _ in checks)
-    enough = agg.trade_count >= gates["P1"] and len(years) >= gates["P2"]
-    verdict = "PASS" if passed else ("FAIL" if enough else "INSUFFICIENT EVIDENCE")
+
+    # The evidence bar is deliberately ASYMMETRIC, and that is a judgement
+    # worth stating rather than burying.
+    #
+    # P1/P2 exist to stop a thin sample being presented as a positive edge —
+    # the 5-trade "profit factor 1.75" this audit began with. They must not
+    # also stop a NEGATIVE result being called what it is: it takes more
+    # evidence to commit capital than to decline to. So a result that is
+    # consistently and directionally negative is a FAIL even below the
+    # minimum-trade floor, where the same sample could never support a PASS.
+    folds_all_losing = bool(fold_rows) and all(
+        m.profit_factor < 1.0 for m in fold_rows
+    )
+    conclusively_negative = (
+        agg.trade_count >= 30
+        and net < 0
+        and agg.profit_factor < 1.0
+        and folds_all_losing
+    )
+    enough_for_positive = (
+        agg.trade_count >= gates["P1"] and len(years) >= gates["P2"]
+    )
+    if passed:
+        verdict = "PASS"
+    elif conclusively_negative:
+        verdict = "FAIL (negative expectancy demonstrated)"
+    elif enough_for_positive:
+        verdict = "FAIL"
+    else:
+        verdict = "INSUFFICIENT EVIDENCE"
     print(f"\n  VERDICT: {verdict}  (horizon={args.horizon}, {label})")
     print(f"  net P&L {net:+,.2f} on 100,000 over {agg.trade_count} trades")
     return 0
