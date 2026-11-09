@@ -29,6 +29,7 @@ from .spec import (
 EQUITIES_ONLY = frozenset({AssetClass.EQUITIES})
 ALL_ASSETS = frozenset({AssetClass.EQUITIES, AssetClass.CRYPTO, AssetClass.FOREX})
 FOREX_ONLY = frozenset({AssetClass.FOREX})
+CRYPTO_ONLY = frozenset({AssetClass.CRYPTO})
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +590,119 @@ FOREX_MEAN_REVERSION_SHORT = StrategySpec(
 )
 
 
+# ---------------------------------------------------------------------------
+# Crypto-native horizon candidates (Phase 3)
+#
+# These are NOT ports of equity logic. Everything above them was written for
+# equities and three specs merely permit crypto; the mental model is still an
+# equity one ("institutional accumulation" on a 24/7 market with no
+# institutions reporting holdings). These two are specified directly against
+# crypto price behaviour and nothing else: no fundamentals, no sector, no
+# session gap, no earnings, no 52-week-high leadership.
+#
+# Both are PROVISIONAL RESEARCH DEFAULTS. Nothing here is a validated setting.
+# The thresholds are the ones named in the brief, recorded before measurement
+# so that measurement can contradict them.
+# ---------------------------------------------------------------------------
+
+
+def _below_feature_for_two_bars(key: str, *, name: str) -> Condition:
+    """Close below ``key`` on this bar and the previous one.
+
+    Honest statement of what this computes, because it is not quite the
+    literal rule. The brief says "close < 20-day EMA for two consecutive
+    days". The feature set exposes the *current* EMA20 and the previous close,
+    but not the previous bar's own EMA20, so both closes are tested against
+    today's EMA. On a 20-period EMA the one-bar drift is small relative to the
+    distance being tested, and the two-bar confirmation — which is the point of
+    the rule — is preserved exactly. Recording the difference rather than
+    quietly treating them as identical.
+    """
+
+    def predicate(ctx: EvalContext) -> tuple[bool, str]:
+        f = ctx.features
+        level = f.number(key)
+        previous = f.number("prev_close")
+        if level is None or previous is None:
+            return False, f"{key} or prev_close unavailable"
+        both = f.close < level and previous < level
+        return both, (
+            f"close={f.close:.6g}, prev={previous:.6g} vs {key}={level:.6g} "
+            f"(two-bar confirmation {'met' if both else 'not met'})"
+        )
+
+    return Condition(name, predicate)
+
+
+def _breakout_above_rolling_high(key: str = "high_20", *, name: str) -> Condition:
+    """Close above the rolling high, on a CLOSING basis.
+
+    Closing basis, not intraday, for the reason already established on
+    equities: comparing a close against prior intraday highs is a materially
+    easier test than comparing it against prior closes, and conflating them
+    inflated the measured breakout rate by more than twice.
+    """
+
+    def predicate(ctx: EvalContext) -> tuple[bool, str]:
+        f = ctx.features
+        level = f.number(key)
+        if level is None:
+            return False, f"{key} unavailable"
+        return f.close > level, f"close={f.close:.6g} vs {key}={level:.6g}"
+
+    return Condition(name, predicate)
+
+
+#: Medium horizon: time-series momentum with a trend-strength filter.
+#: Specified in the brief as: long when close > 50-day MA and ADX(14) > 25;
+#: exit when close < 20-day EMA for two consecutive days; ATR trailing stop.
+CRYPTO_TREND_MEDIUM = StrategySpec(
+    id="STRATEGY_012",
+    name="Crypto Trend (medium horizon)",
+    strategy_type="momentum",
+    side=Side.LONG,
+    asset_classes=CRYPTO_ONLY,
+    entry_conditions=(
+        price_above_feature("ma50", name="close_above_ma50"),
+        feature_above("adx_14", 25.0, name="adx_above_25"),
+    ),
+    invalidation_conditions=(
+        _below_feature_for_two_bars("ema20", name="close_below_ema20_two_bars"),
+    ),
+    stop=StopSpec(atr_multiplier=2.0, max_stop_pct=0.05, use_structure=False),
+    target_ladder="scale_out",
+    min_data_points=300,
+    max_holding_days=42,          # ~6 weeks, the stated upper holding bound
+    notes="PROVISIONAL RESEARCH DEFAULT. Medium horizon, 4h-1d signal bars. "
+          "use_structure=False deliberately: a structural stop on crypto sits "
+          "beyond the 5% cap on 41% of daily bars (measured), which would "
+          "reject most entries rather than size them.",
+)
+
+#: Medium horizon: Donchian channel breakout with the same trend filter.
+#: A second, deliberately different entry mechanism on the same horizon, so
+#: that a failure can be attributed to the horizon rather than to one rule.
+CRYPTO_DONCHIAN_MEDIUM = StrategySpec(
+    id="STRATEGY_013",
+    name="Crypto Donchian Breakout (medium horizon)",
+    strategy_type="breakout",
+    side=Side.LONG,
+    asset_classes=CRYPTO_ONLY,
+    entry_conditions=(
+        _breakout_above_rolling_high("high_20", name="close_above_20_bar_high"),
+        price_above_feature("ma50", name="close_above_ma50"),
+    ),
+    invalidation_conditions=(
+        _below_feature_for_two_bars("ema20", name="close_below_ema20_two_bars"),
+    ),
+    stop=StopSpec(atr_multiplier=2.0, max_stop_pct=0.05, use_structure=False),
+    target_ladder="scale_out",
+    min_data_points=300,
+    max_holding_days=42,
+    notes="PROVISIONAL RESEARCH DEFAULT. Donchian breakout, closing basis.",
+)
+
+
 ALL_STRATEGIES: tuple[StrategySpec, ...] = (
     MOMENTUM_BREAKOUT,
     PULLBACK_MA_BOUNCE,
@@ -601,6 +715,8 @@ ALL_STRATEGIES: tuple[StrategySpec, ...] = (
     INSTITUTIONAL_ACCUMULATION,
     FOREX_MEAN_REVERSION,
     FOREX_MEAN_REVERSION_SHORT,
+    CRYPTO_TREND_MEDIUM,
+    CRYPTO_DONCHIAN_MEDIUM,
 )
 
 STRATEGIES_BY_ID: Mapping[str, StrategySpec] = {s.id: s for s in ALL_STRATEGIES}

@@ -54,9 +54,14 @@ from ..risk.stops import StopLossEngine
 from ..risk.targets import LADDERS, TakeProfitEngine
 from ..risk.trailing import TrailingStopEngine
 from ..strategy.engine import StrategyEngine
-from ..strategy.library import MOMENTUM_BREAKOUT
+from ..strategy.library import MOMENTUM_BREAKOUT, STRATEGIES_BY_ID
 from ..strategy.scoring import ScoringInputs
 from ..strategy.spec import EvalContext, Fundamentals, StrategySpec
+
+
+#: Holding limit applied only to a strategy that declares none of its own.
+#: Previously this value was hardcoded inline and overrode every spec.
+DEFAULT_MAX_HOLDING_DAYS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,7 +280,7 @@ class Backtester:
             pending = []
 
             # -- 3. manage open positions (stops, targets, trailing) ----------
-            self._manage_positions(book, broker, prices, series_by_symbol, now)
+            self._manage_positions(book, broker, prices, series_by_symbol, now, cfg)
 
             book.mark_equity(now)
 
@@ -524,6 +529,7 @@ class Backtester:
         prices: Mapping[str, float],
         series_by_symbol: Mapping[str, CandleSeries],
         now: datetime,
+        cfg: BacktestConfig | None = None,
     ) -> None:
         """Apply stops, targets, trailing and time stops to open positions.
 
@@ -531,6 +537,7 @@ class Backtester:
         a stop that was breached intraday was hit, and pretending otherwise
         systematically understates losses.
         """
+        cfg = cfg if cfg is not None else BacktestConfig()
         for position in list(book.positions):
             symbol = position.symbol
             price = prices.get(symbol)
@@ -582,7 +589,46 @@ class Backtester:
                 features_atr = last_value(atr_fn(visible.highs, visible.lows, visible.closes, 14))
             self.trailing.update(book.get(symbol), price, atr=features_atr)  # type: ignore[arg-type]
 
-            # 4. Time stop.
+            # 4. Strategy invalidation — the strategy's own stated exit rule.
+            #
+            # Two defects were found here together, and both made the
+            # backtester simulate a different strategy than the one specified:
+            #
+            # * `invalidation_conditions` is declared on every StrategySpec and
+            #   `check_invalidation` exists to evaluate them, and nothing in
+            #   this module or the orchestrator ever called either. A spec
+            #   could say "exit when the trend breaks" and be held to a stop
+            #   and a target instead.
+            # * The time stop below was hardcoded to 60 days, ignoring
+            #   `max_holding_days` entirely. The FOREX mean-reversion specs
+            #   declare a 5-day limit and were in fact held up to 60 — twelve
+            #   times their stated horizon. Every conclusion previously drawn
+            #   about those strategies' holding behaviour was therefore drawn
+            #   about a strategy that was never specified.
+            spec = STRATEGIES_BY_ID.get(position.strategy_id)
+            if spec is not None and spec.invalidation_conditions and len(visible) >= 20:
+                invalidation_features = self.features.compute(
+                    visible.tail(cfg.decision_window), detect_bases=False
+                )
+                reasons = spec.check_invalidation(
+                    EvalContext(
+                        features=invalidation_features,
+                        fundamentals=self.fundamentals.get(symbol, Fundamentals()),
+                    )
+                )
+                if reasons:
+                    book.close_position(
+                        symbol, price, timestamp=now,
+                        reason=f"invalidated:{reasons[0].name}",
+                    )
+                    continue
+
+            # 5. Time stop — the strategy's own horizon, not a flat default.
             holding_days = (now - position.opened_at).total_seconds() / 86400.0
-            if holding_days > 60:
+            limit = (
+                spec.max_holding_days
+                if spec is not None and spec.max_holding_days is not None
+                else DEFAULT_MAX_HOLDING_DAYS
+            )
+            if holding_days > limit:
                 book.close_position(symbol, price, timestamp=now, reason="time_stop")

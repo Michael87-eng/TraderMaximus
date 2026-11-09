@@ -26,7 +26,17 @@ class VolatilityBand:
 
 @dataclass(frozen=True, slots=True)
 class AssetLimits:
-    """Per-asset-class calibration (section 9.2)."""
+    """Per-asset-class calibration (section 9.2).
+
+    ``max_leverage`` used to live here too, at 0.0 for every asset class, and
+    was never read. It was removed rather than wired up, because the two
+    constants meant opposite things under the same name: ``HardLimits``
+    expresses "1.0 = no borrowing" and is tested as ``max_leverage - 1.0``,
+    while 0.0 here read as "no leverage permitted". Both produced 0.0 through
+    that arithmetic by coincidence, so the collision was invisible and would
+    have surfaced as a silent risk change the first time either was edited.
+    Leverage is governed in exactly one place: ``HardLimits.max_leverage``.
+    """
 
     asset_class: AssetClass
     risk_bands: tuple[VolatilityBand, ...]
@@ -37,7 +47,6 @@ class AssetLimits:
     min_liquidity: float
     max_stop_pct: float
     min_stop_pct: float
-    max_leverage: float = 0.0
     trailing_pct: float = 0.05
     #: How many positions this asset class may hold at once (Phase 6).
     #:

@@ -85,7 +85,9 @@ class SignalScoringEngine:
             "trend_alignment": self._trend_alignment(features, spec.side, spec.strategy_type),
             "setup_quality": self._setup_quality(evaluation, features, inputs),
             "volume_confirmation": self._volume_confirmation(features, spec.strategy_type),
-            "relative_strength": self._relative_strength(features, inputs),
+            "relative_strength": self._relative_strength(
+                features, inputs, sector_applies=features.asset_class is AssetClass.EQUITIES
+            ),
             "volatility_conditions": self._volatility_conditions(features, spec),
             "liquidity": self._liquidity(features, inputs),
             "risk_reward": self._risk_reward(inputs),
@@ -273,17 +275,52 @@ class SignalScoringEngine:
         return round(min(maximum, score), 4)
 
     @staticmethod
-    def _relative_strength(features: FeatureSet, inputs: ScoringInputs) -> float:
+    def _relative_strength(
+        features: FeatureSet, inputs: ScoringInputs, *, sector_applies: bool = True
+    ) -> float:
+        """Relative strength, renormalised over sub-components that can apply.
+
+        The component has three parts: an RS rating (50%), sector strength
+        (25%) and distance from the 52-week high (25%).
+
+        There is a distinction here that the original implementation collapsed,
+        and collapsing it quietly penalised crypto on every single signal:
+
+        * **Structurally inapplicable.** Crypto has no sector. The sector
+          sub-component is not missing data, it is a question that cannot be
+          asked. Scoring it zero caps every crypto score at 97.2 out of 100 and
+          makes every crypto threshold ~2.8 points stricter than the identical
+          equity threshold — a hidden asset-class bias, which is exactly what
+          the module docstring says the fundamentals rescale exists to prevent.
+          So its weight is redistributed over the parts that do apply.
+
+        * **Missing data.** An absent RS rating is a measurement we failed to
+          take. That must score zero and must NOT be renormalised away, or a
+          data outage would read as a perfect score.
+
+        The two cases look identical in the code and are opposite in meaning.
+        """
         maximum = COMPONENT_MAX["relative_strength"]
+        # Sub-weights over the parts that can apply to this asset class.
+        weights = {"rating": 0.50, "sector": 0.25, "distance": 0.25}
+        if not sector_applies:
+            del weights["sector"]
+            total = sum(weights.values())
+            weights = {k: v / total for k, v in weights.items()}
+
         score = 0.0
         if inputs.relative_strength_rating is not None:
-            score += _scale(inputs.relative_strength_rating, 50.0, 95.0, 0.50 * maximum)
-        if inputs.sector_strength is not None:
-            score += _scale(inputs.sector_strength, -0.02, 0.05, 0.25 * maximum)
+            score += _scale(
+                inputs.relative_strength_rating, 50.0, 95.0, weights["rating"] * maximum
+            )
+        if sector_applies and inputs.sector_strength is not None:
+            score += _scale(
+                inputs.sector_strength, -0.02, 0.05, weights["sector"] * maximum
+            )
         distance = features.number("distance_from_52w_high")
         if distance is not None:
             # Closer to the 52-week high is stronger; invert the distance.
-            score += _scale(-distance, -0.25, 0.0, 0.25 * maximum)
+            score += _scale(-distance, -0.25, 0.0, weights["distance"] * maximum)
         return round(min(maximum, score), 4)
 
     @staticmethod

@@ -6,13 +6,13 @@
   "commit": "9a42e3c4e0a0937f3abe2b63960ce940d6351bd0",
   "symbols": {
     "BTC-USD": {
-      "sha256": "d8e0b832614ce80c83028790966fd9b3b4268fa5be0da1496cfb3a2e5d04cddb",
-      "bytes": 503685,
-      "rows": 5960,
-      "first_bar": "2010-07-17",
+      "sha256": "dc59dedcd5d52d04665d7fb3bf4ec8d95f3f9ebd9d5f0a5af31a2d93df228cd0",
+      "bytes": 416047,
+      "rows": 4701,
+      "first_bar": "2013-12-27",
       "last_bar": "2026-11-09",
       "duplicate_timestamps": 0,
-      "zero_volume_bars": 1259
+      "zero_volume_bars": 0
     },
     "ETH-USD": {
       "sha256": "eb375f4495e06698069985c9684c6c5e83b0e8d36b26f0183edd7c5dc3ff9645",
@@ -22,6 +22,16 @@
       "last_bar": "2026-11-09",
       "duplicate_timestamps": 0,
       "zero_volume_bars": 0
+    }
+  },
+  "preprocessing": {
+    "BTC-USD": {
+      "action": "trimmed leading zero-volume / flat-price bars",
+      "bars_removed": 1259,
+      "removed_span": "2010-07-17 .. 2013-12-26",
+      "reason": "Alpha Vantage carries BTC back to 2010-07-17 at a flat $0.05 with zero volume. The quality engine scored the series 0.80 and the loader excluded it, which silently removed BTC from every crypto run. Trimmed rather than threshold-lowered: the bars are not low-quality data, they are not data.",
+      "raw_preserved_as": "_raw/BTC-USD.raw.csv",
+      "raw_sha256": "d8e0b832614ce80c83028790966fd9b3b4268fa5be0da1496cfb3a2e5d04cddb"
     }
   }
 }

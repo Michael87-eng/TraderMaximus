@@ -437,11 +437,22 @@ class RiskEngine:
 
         checks.append(Rule.ASSET_CLASS_EXPOSURE)
         class_exposure = metrics.asset_class_exposure.get(signal.asset_class.value, 0.0)
-        if class_exposure > self.limits.max_asset_class_exposure * (1.0 + 1e-9):
+        # The most restrictive applicable cap wins. Two existed and only the
+        # global one was read: AssetLimits.max_exposure_total was defined for
+        # every asset class and never consulted anywhere in the codebase. For
+        # crypto the two happened to be equal (0.40), which is why nothing ever
+        # looked wrong; FOREX's 0.30 was being silently overridden by the
+        # global 0.40, and equities' 0.50 would have been looser than the
+        # global cap it was supposed to refine.
+        class_limit = min(
+            self.limits.max_asset_class_exposure,
+            asset_limits_for_signal.max_exposure_total,
+        )
+        if class_exposure > class_limit * (1.0 + 1e-9):
             return reject(
                 Rule.ASSET_CLASS_EXPOSURE,
                 f"projected {signal.asset_class.value} exposure {class_exposure:.2%} exceeds "
-                f"{self.limits.max_asset_class_exposure:.2%}",
+                f"{class_limit:.2%}",
                 stop=stop,
                 sizing=sizing,
                 metrics=metrics,
